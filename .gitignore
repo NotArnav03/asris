@@ -1,0 +1,64 @@
+# ─── Python ──────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# ─── Virtual Environments ────────────────────
+venv/
+.venv/
+env/
+
+# ─── Data (large files) ─────────────────────
+data/
+*.csv
+*.pkl
+*.npy
+*.npz
+*.h5
+*.hdf5
+
+# ─── Model Files & Caches ───────────────────
+*.pt
+*.pth
+*.onnx
+*.bin
+*.safetensors
+cache/
+.cache/
+embedding_cache/
+
+# ─── MLflow / Experiments ────────────────────
+mlruns/
+mlflow.db
+experiments/*.json
+
+# ─── IDE / Editor ────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ─── OS Files ────────────────────────────────
+desktop.ini
+*.lnk
+
+# ─── Jupyter ─────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ─── Logs ────────────────────────────────────
+*.log
+logs/
+
+# ─── Misc ────────────────────────────────────
+.env
+.env.local
+*.bak

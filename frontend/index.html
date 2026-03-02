@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ASRIS — AI Resume Screening & Intelligent Shortlisting</title>
+    <meta name="description"
+        content="AI-powered resume screening system that matches candidates to job descriptions using multi-signal ranking.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="/frontend/styles.css">
+</head>
+
+<body>
+    <!-- Animated Background -->
+    <div class="bg-grid"></div>
+    <div class="bg-glow bg-glow-1"></div>
+    <div class="bg-glow bg-glow-2"></div>
+    <div class="bg-glow bg-glow-3"></div>
+
+    <!-- Floating Particles -->
+    <div class="particles" id="particles"></div>
+
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="nav-brand">
+            <div class="logo-icon">
+                <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+                    <path d="M14 2L26 8V20L14 26L2 20V8L14 2Z" stroke="url(#logoGrad)" stroke-width="2" fill="none" />
+                    <path d="M14 8L20 11V17L14 20L8 17V11L14 8Z" fill="url(#logoGrad)" opacity="0.6" />
+                    <circle cx="14" cy="14" r="3" fill="url(#logoGrad)" />
+                    <defs>
+                        <linearGradient id="logoGrad" x1="2" y1="2" x2="26" y2="26">
+                            <stop stop-color="#6366f1" />
+                            <stop offset="1" stop-color="#a855f7" />
+                        </linearGradient>
+                    </defs>
+                </svg>
+            </div>
+            <span class="brand-text">ASRIS</span>
+            <span class="brand-badge">AI</span>
+        </div>
+        <div class="nav-links">
+            <a href="#rank" class="nav-link active" data-section="rank">
+                <span class="nav-icon">⚡</span> Rank
+            </a>
+            <a href="#explain" class="nav-link" data-section="explain">
+                <span class="nav-icon">🔍</span> Explain
+            </a>
+            <a href="#dashboard" class="nav-link" data-section="dashboard">
+                <span class="nav-icon">📊</span> Dashboard
+            </a>
+        </div>
+        <div class="nav-status" id="serverStatus">
+            <span class="status-dot"></span>
+            <span class="status-text">Connecting...</span>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main-content">
+
+        <!-- ═══ RANK SECTION ═══ -->
+        <section class="section active" id="section-rank">
+            <div class="section-header">
+                <h1 class="section-title">
+                    <span class="title-accent">Rank</span> Candidates
+                </h1>
+                <p class="section-subtitle">Paste a job description and upload PDF resumes (or paste text) to get
+                    AI-powered candidate rankings.</p>
+            </div>
+
+            <div class="rank-grid">
+                <!-- JD Input -->
+                <div class="glass-card card-jd">
+                    <div class="card-header">
+                        <div class="card-icon">📄</div>
+                        <h2 class="card-title">Job Description</h2>
+                    </div>
+                    <textarea id="jdInput" class="text-input"
+                        placeholder="Paste the job description here...&#10;&#10;Example: Looking for a Senior Python Developer with experience in machine learning, TensorFlow, and cloud deployment. Must have strong SQL skills and 3+ years of experience."
+                        rows="10"></textarea>
+                </div>
+
+                <!-- Resume Input -->
+                <div class="glass-card card-resumes">
+                    <div class="card-header">
+                        <div class="card-icon">👤</div>
+                        <h2 class="card-title">Resumes</h2>
+                        <button class="btn-icon" id="addResumeBtn" title="Add text resume">
+                            <span>+</span>
+                        </button>
+                    </div>
+
+                    <!-- PDF Drop Zone -->
+                    <div class="drop-zone" id="rankDropZone">
+                        <input type="file" id="rankFileInput" accept=".pdf" multiple hidden>
+                        <div class="drop-zone-content">
+                            <div class="drop-zone-icon">📎</div>
+                            <div class="drop-zone-title">Drag & drop PDF resumes here</div>
+                            <div class="drop-zone-subtitle">or <span class="drop-zone-link" id="rankBrowseBtn">browse
+                                    files</span></div>
+                        </div>
+                        <div class="drop-zone-active-overlay">
+                            <span>Drop PDFs here</span>
+                        </div>
+                    </div>
+
+                    <!-- Uploaded Files List -->
+                    <div class="uploaded-files" id="uploadedFiles"></div>
+
+                    <!-- Text Fallback -->
+                    <div class="text-toggle">
+                        <button class="btn-text-toggle" id="toggleTextInput">Or paste text manually ▾</button>
+                    </div>
+                    <div class="resume-inputs" id="resumeInputs" style="display: none;">
+                        <div class="resume-entry" data-index="0">
+                            <div class="resume-entry-header">
+                                <input type="text" class="resume-name" placeholder="candidate_name" value="candidate_1">
+                                <button class="btn-remove" title="Remove">&times;</button>
+                            </div>
+                            <textarea class="text-input resume-text" placeholder="Paste resume text here..."
+                                rows="6"></textarea>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Controls -->
+            <div class="controls-bar">
+                <div class="control-group">
+                    <label class="control-label">Top K</label>
+                    <div class="slider-group">
+                        <input type="range" id="topKSlider" min="1" max="20" value="10" class="slider">
+                        <span class="slider-value" id="topKValue">10</span>
+                    </div>
+                </div>
+                <button class="btn-primary" id="rankBtn">
+                    <span class="btn-icon-inner">⚡</span>
+                    <span>Rank Candidates</span>
+                    <span class="btn-loader" id="rankLoader"></span>
+                </button>
+            </div>
+
+            <!-- Results -->
+            <div class="results-container" id="rankResults" style="display: none;">
+                <div class="results-header">
+                    <h2 class="results-title">🏆 Ranking Results</h2>
+                    <span class="results-count" id="resultsCount"></span>
+                </div>
+                <div class="results-list" id="resultsList"></div>
+            </div>
+        </section>
+
+        <!-- ═══ EXPLAIN SECTION ═══ -->
+        <section class="section" id="section-explain">
+            <div class="section-header">
+                <h1 class="section-title">
+                    <span class="title-accent">Explain</span> Match
+                </h1>
+                <p class="section-subtitle">Understand why a resume matches or doesn't match a job description — with
+                    skill breakdowns and keyword analysis.</p>
+            </div>
+
+            <div class="explain-grid">
+                <div class="glass-card">
+                    <div class="card-header">
+                        <div class="card-icon">📄</div>
+                        <h2 class="card-title">Job Description</h2>
+                    </div>
+                    <textarea id="explainJdInput" class="text-input" placeholder="Paste the job description..."
+                        rows="8"></textarea>
+                </div>
+                <div class="glass-card">
+                    <div class="card-header">
+                        <div class="card-icon">👤</div>
+                        <h2 class="card-title">Resume</h2>
+                    </div>
+                    <div class="drop-zone drop-zone-sm" id="explainDropZone">
+                        <input type="file" id="explainFileInput" accept=".pdf" hidden>
+                        <div class="drop-zone-content">
+                            <div class="drop-zone-icon">📎</div>
+                            <div class="drop-zone-title">Drop PDF or <span class="drop-zone-link"
+                                    id="explainBrowseBtn">browse</span></div>
+                        </div>
+                        <div class="drop-zone-active-overlay"><span>Drop PDF here</span></div>
+                    </div>
+                    <div class="uploaded-file-badge" id="explainFileBadge" style="display:none;"></div>
+                    <textarea id="explainResumeInput" class="text-input" placeholder="Or paste the resume text..."
+                        rows="6"></textarea>
+                </div>
+            </div>
+
+            <div class="controls-bar">
+                <button class="btn-primary" id="explainBtn">
+                    <span class="btn-icon-inner">🔍</span>
+                    <span>Analyze Match</span>
+                    <span class="btn-loader" id="explainLoader"></span>
+                </button>
+            </div>
+
+            <!-- Explanation Results -->
+            <div class="explanation-container" id="explainResults" style="display: none;">
+                <!-- Verdict -->
+                <div class="glass-card verdict-card" id="verdictCard">
+                    <div class="verdict-text" id="verdictText"></div>
+                </div>
+
+                <div class="explain-metrics-grid">
+                    <!-- Scores -->
+                    <div class="glass-card">
+                        <h3 class="metric-title">Scores</h3>
+                        <div class="metric-bars" id="scoresBars"></div>
+                    </div>
+
+                    <!-- Skills -->
+                    <div class="glass-card">
+                        <h3 class="metric-title">Skill Analysis</h3>
+                        <div id="skillAnalysis"></div>
+                    </div>
+
+                    <!-- Keywords -->
+                    <div class="glass-card">
+                        <h3 class="metric-title">Keyword Overlap</h3>
+                        <div id="keywordAnalysis"></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ═══ DASHBOARD SECTION ═══ -->
+        <section class="section" id="section-dashboard">
+            <div class="section-header">
+                <h1 class="section-title">
+                    <span class="title-accent">System</span> Dashboard
+                </h1>
+                <p class="section-subtitle">Overview of processed data, cache statistics, and system health.</p>
+            </div>
+
+            <div class="dashboard-grid" id="dashboardGrid">
+                <!-- Stats cards populated by JS -->
+                <div class="glass-card stat-card">
+                    <div class="stat-icon">📑</div>
+                    <div class="stat-value" id="statResumes">—</div>
+                    <div class="stat-label">Processed Resumes</div>
+                    <div class="stat-bar">
+                        <div class="stat-bar-fill" style="width: 0%"></div>
+                    </div>
+                </div>
+                <div class="glass-card stat-card">
+                    <div class="stat-icon">💼</div>
+                    <div class="stat-value" id="statJds">—</div>
+                    <div class="stat-label">Job Descriptions</div>
+                    <div class="stat-bar">
+                        <div class="stat-bar-fill" style="width: 0%"></div>
+                    </div>
+                </div>
+                <div class="glass-card stat-card">
+                    <div class="stat-icon">🔗</div>
+                    <div class="stat-value" id="statPairs">—</div>
+                    <div class="stat-label">Training Pairs</div>
+                    <div class="stat-bar">
+                        <div class="stat-bar-fill" style="width: 0%"></div>
+                    </div>
+                </div>
+                <div class="glass-card stat-card">
+                    <div class="stat-icon">💾</div>
+                    <div class="stat-value" id="statCache">—</div>
+                    <div class="stat-label">Cache Size</div>
+                    <div class="stat-bar">
+                        <div class="stat-bar-fill" style="width: 0%"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Pair Datasets Breakdown -->
+            <div class="glass-card" id="pairBreakdownCard" style="margin-top: 1.5rem;">
+                <h3 class="metric-title">Pair Dataset Breakdown</h3>
+                <div id="pairBreakdown"></div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script src="/frontend/app.js"></script>
+</body>
+
+</html>
