@@ -8,6 +8,7 @@ An end-to-end AI system that matches job descriptions (JDs) to resumes using mul
 asris/
 ├── config.py                    # Centralized configuration
 ├── run_pipeline.py              # Pipeline orchestration CLI
+├── requirements.txt             # Python dependencies
 ├── ingestion/                   # Data ingestion & pair generation
 │   ├── resume_ingestion.py      # PDF/CSV resume parsing
 │   ├── jd_domain_labeler.py     # Domain label assignment
@@ -39,9 +40,13 @@ asris/
 ├── experiments/                 # Experiment tracking
 │   └── experiment_runner.py     # MLflow-based experiment logging
 ├── api/                         # REST API
-│   └── server.py                # FastAPI endpoints
+│   └── server.py                # FastAPI endpoints + frontend serving
+├── frontend/                    # Web UI
+│   ├── index.html               # Single-page app (Rank, Explain, Dashboard)
+│   ├── styles.css               # Styles
+│   └── app.js                   # Frontend logic
 ├── tests/                       # Unit & integration tests
-│   └── test_preprocessing.py
+│   └── test_core.py
 ├── notebooks/                   # Data inspection scripts
 └── data/
     ├── raw/                     # Original resumes & JDs
@@ -69,9 +74,23 @@ python run_pipeline.py --stage embeddings
 python run_pipeline.py --stage evaluate
 python run_pipeline.py --stage explain
 
-# 5. Start the API server
+# 5. Start the API server (serves the web UI at http://localhost:8000)
 python -m api.server
+# or: uvicorn api.server:app --host 0.0.0.0 --port 8000 --reload
 ```
+
+## API Endpoints
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/` | Serve the web UI |
+| GET | `/health` | Health check |
+| POST | `/upload-pdf` | Upload a single PDF resume and extract text |
+| POST | `/rank-pdfs` | Upload multiple PDF resumes and rank against a JD |
+| POST | `/rank` | Rank resumes from text against a JD |
+| POST | `/explain` | Explain why a resume matches a JD |
+| GET | `/stats` | System stats (resume/JD counts, pair datasets) |
+| GET | `/cache/stats` | Embedding cache statistics |
 
 ## Ranking Approaches
 
