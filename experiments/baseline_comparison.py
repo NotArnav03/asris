@@ -253,7 +253,10 @@ def run_baselines():
     all_results = {}
 
     cache_dir = Path(__file__).resolve().parent.parent / "data" / "baseline_cache"
-    cache_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+    except (FileExistsError, OSError):
+        pass
 
     for name, score_fn in baselines.items():
         print(f"\n--- {name} ---")

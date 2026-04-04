@@ -301,7 +301,10 @@ class AblationRunner:
         """Save results to JSON."""
         results = results or self.results
         output_dir = EXPERIMENT_DIR
-        output_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            output_dir.mkdir(parents=True, exist_ok=True)
+        except (FileExistsError, OSError):
+            pass
 
         # Serialize CV results
         serializable = []

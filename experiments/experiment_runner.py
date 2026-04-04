@@ -32,7 +32,10 @@ class ExperimentTracker:
     ):
         self.experiment_name = experiment_name
         self.output_dir = output_dir or EXPERIMENT_DIR
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+        except (FileExistsError, OSError):
+            pass
         self.use_mlflow = use_mlflow
         self._mlflow = None
 

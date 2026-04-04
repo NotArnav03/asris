@@ -39,7 +39,10 @@ class EmbeddingManager:
     ):
         self.model_name = model_name
         self.cache_dir = cache_dir or EMBEDDING_CACHE_DIR
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
+        except (FileExistsError, OSError):
+            pass
 
         self._sbert_model = None
         self._tfidf_vectorizer = None

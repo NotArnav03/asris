@@ -12,7 +12,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 RAW_RESUME_DIR = BASE_DIR / "data" / "raw" / "resumes"
 PROCESSED_DIR = BASE_DIR / "data" / "processed" / "resumes_cleaned"
 
-PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+try:
+    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+except (FileExistsError, OSError):
+    pass
 
 
 # -----------------------------

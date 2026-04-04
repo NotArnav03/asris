@@ -113,6 +113,9 @@ def generate_pairs(jd_domains, jd_texts, resume_texts, resume_domains,
     np.random.seed(42)
     np.random.shuffle(sampled_jds)
 
+    n_hard = NEGATIVES_PER_JD // 2
+    n_easy = NEGATIVES_PER_JD - n_hard
+
     for job_id, jd_domain in tqdm(sampled_jds, desc="Generating domain-match pairs"):
         if jd_domain == "UNKNOWN" or jd_domain not in all_domains:
             continue
@@ -130,15 +133,25 @@ def generate_pairs(jd_domains, jd_texts, resume_texts, resume_domains,
         for adj_domain in adjacent:
             hard_neg_pool.extend(resumes_by_domain.get(adj_domain, []))
 
-        if len(hard_neg_pool) < NEGATIVES_PER_JD:
-            for d in all_domains:
-                if d != jd_domain and d not in adjacent:
-                    hard_neg_pool.extend(resumes_by_domain.get(d, []))
+        easy_neg_pool = []
+        for d in all_domains:
+            if d != jd_domain and d not in adjacent:
+                easy_neg_pool.extend(resumes_by_domain.get(d, []))
 
-        if len(hard_neg_pool) >= NEGATIVES_PER_JD:
-            neg_sample = np.random.choice(hard_neg_pool, size=NEGATIVES_PER_JD, replace=False)
-            for resume_file in neg_sample:
-                pairs.append({"job_id": job_id, "resume_filename": resume_file, "label": 0})
+        neg_selected = []
+        if len(hard_neg_pool) >= n_hard:
+            neg_selected.extend(np.random.choice(hard_neg_pool, size=n_hard, replace=False).tolist())
+        elif hard_neg_pool:
+            neg_selected.extend(hard_neg_pool)
+
+        remaining = NEGATIVES_PER_JD - len(neg_selected)
+        if len(easy_neg_pool) >= remaining:
+            neg_selected.extend(np.random.choice(easy_neg_pool, size=remaining, replace=False).tolist())
+        elif easy_neg_pool:
+            neg_selected.extend(np.random.choice(easy_neg_pool, size=min(remaining, len(easy_neg_pool)), replace=False).tolist())
+
+        for resume_file in neg_selected:
+            pairs.append({"job_id": job_id, "resume_filename": resume_file, "label": 0})
 
     return pd.DataFrame(pairs)
 
@@ -183,7 +196,10 @@ if __name__ == "__main__":
     print(f"\nTotal pairs: {len(pairs_df)}")
     print(f"Label distribution:\n{pairs_df['label'].value_counts().to_string()}")
 
-    LABELED_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        LABELED_DIR.mkdir(parents=True, exist_ok=True)
+    except (FileExistsError, OSError):
+        pass
     out_path = LABELED_DIR / "domain_match_pairs.csv"
     pairs_df.to_csv(out_path, index=False)
     print(f"\nSaved to: {out_path}")
