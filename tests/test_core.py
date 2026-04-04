@@ -238,5 +238,157 @@ class TestBiasDetector:
         assert "recommendations" in audit
 
 
+# ═══════════════════════════════════════════════════════════════
+# Fairness-Constrained Re-ranking Tests
+# ═══════════════════════════════════════════════════════════════
+
+class TestFairnessRanker:
+
+    def test_already_fair_ranking(self):
+        from ranking.fairness_ranker import FairnessConstrainedRanker, RankedCandidate
+        candidates = [
+            RankedCandidate("a", 0.9, "male"),
+            RankedCandidate("b", 0.8, "female"),
+            RankedCandidate("c", 0.7, "male"),
+            RankedCandidate("d", 0.6, "female"),
+        ]
+        fcr = FairnessConstrainedRanker(threshold=0.8)
+        report = fcr.rerank(candidates)
+        assert report.fairness_satisfied is True
+        assert report.num_swaps == 0
+
+    def test_biased_ranking_gets_fixed(self):
+        from ranking.fairness_ranker import FairnessConstrainedRanker, RankedCandidate
+        candidates = [
+            RankedCandidate("m1", 0.95, "male"),
+            RankedCandidate("m2", 0.90, "male"),
+            RankedCandidate("m3", 0.85, "male"),
+            RankedCandidate("m4", 0.80, "male"),
+            RankedCandidate("f1", 0.75, "female"),
+            RankedCandidate("f2", 0.70, "female"),
+            RankedCandidate("f3", 0.65, "female"),
+            RankedCandidate("f4", 0.60, "female"),
+        ]
+        fcr = FairnessConstrainedRanker(threshold=0.8)
+        report = fcr.rerank(candidates)
+        assert report.final_air >= 0.8 or report.num_swaps > 0
+
+    def test_displacement_cost_zero_when_unchanged(self):
+        from ranking.fairness_ranker import FairnessConstrainedRanker, RankedCandidate
+        candidates = [
+            RankedCandidate("a", 0.9, "male"),
+            RankedCandidate("b", 0.8, "female"),
+        ]
+        fcr = FairnessConstrainedRanker(threshold=0.8)
+        report = fcr.rerank(candidates)
+        assert report.displacement_cost == 0.0
+
+    def test_from_scores_and_groups(self):
+        from ranking.fairness_ranker import FairnessConstrainedRanker
+        report = FairnessConstrainedRanker.from_scores_and_groups(
+            names=["a", "b", "c", "d"],
+            scores=[0.9, 0.8, 0.7, 0.6],
+            groups=["male", "female", "male", "female"],
+        )
+        assert report.fairness_satisfied is True
+        assert len(report.original_ranking) == 4
+
+    def test_pareto_frontier_computed(self):
+        from ranking.fairness_ranker import FairnessConstrainedRanker, RankedCandidate
+        candidates = [
+            RankedCandidate("a", 0.9, "male"),
+            RankedCandidate("b", 0.8, "female"),
+            RankedCandidate("c", 0.7, "male"),
+            RankedCandidate("d", 0.6, "female"),
+        ]
+        fcr = FairnessConstrainedRanker(threshold=0.8)
+        report = fcr.rerank(candidates)
+        assert len(report.pareto_points) > 0
+        assert all("threshold" in p for p in report.pareto_points)
+
+
+# ═══════════════════════════════════════════════════════════════
+# Counterfactual Explainer Tests
+# ═══════════════════════════════════════════════════════════════
+
+class TestCounterfactual:
+
+    def test_skill_extraction(self):
+        from explainability.counterfactual import CounterfactualExplainer
+        exp = CounterfactualExplainer()
+        skills = exp._extract_skills("Python developer with machine learning and NLP")
+        assert "python" in skills
+        assert "machine learning" in skills
+        assert "nlp" in skills
+
+    def test_counterfactual_report_structure(self):
+        from explainability.counterfactual import CounterfactualExplainer
+        exp = CounterfactualExplainer()
+        report = exp.explain_candidate(
+            candidate_name="test",
+            candidate_score=0.5,
+            candidate_resume="Python developer",
+            jd_text="Need Python, machine learning, deep learning, NLP skills",
+            all_scores={"test": 0.5, "other": 0.8},
+            top_k=3,
+        )
+        assert report.candidate_name == "test"
+        assert report.original_score == 0.5
+        assert report.total_skills_analyzed > 0
+
+    def test_counterfactual_identifies_improvements(self):
+        from explainability.counterfactual import CounterfactualExplainer
+        exp = CounterfactualExplainer()
+        report = exp.explain_candidate(
+            candidate_name="bob",
+            candidate_score=0.3,
+            candidate_resume="Java developer with SQL experience",
+            jd_text="Python machine learning deep learning TensorFlow NLP AWS",
+            all_scores={"bob": 0.3, "alice": 0.7, "charlie": 0.9},
+            top_k=5,
+        )
+        assert len(report.top_improvements) > 0
+
+    def test_explain_all_candidates(self):
+        from explainability.counterfactual import CounterfactualExplainer
+        exp = CounterfactualExplainer()
+        reports = exp.explain_all_candidates(
+            scores={"a": 0.8, "b": 0.5},
+            resume_texts={"a": "Python ML", "b": "Java SQL"},
+            jd_text="Python machine learning deep learning",
+            top_k=3,
+        )
+        assert len(reports) == 2
+
+
+# ═══════════════════════════════════════════════════════════════
+# Extended Fairness Metrics Tests
+# ═══════════════════════════════════════════════════════════════
+
+class TestExtendedFairness:
+
+    def test_demographic_parity_distance(self):
+        from fairness.bias_detector import BiasDetector
+        rates = {"male": 0.8, "female": 0.4}
+        dpd = BiasDetector.demographic_parity_distance(rates)
+        assert dpd > 0
+        assert dpd <= 0.5
+
+    def test_equalized_odds(self):
+        from fairness.bias_detector import BiasDetector
+        tpr = {"male": 0.9, "female": 0.6}
+        fpr = {"male": 0.1, "female": 0.2}
+        result = BiasDetector.equalized_odds(tpr, fpr)
+        assert result["tpr_gap"] == 0.3
+        assert result["fpr_gap"] == 0.1
+        assert result["equalized_odds_gap"] == 0.3
+
+    def test_statistical_parity_difference_zero(self):
+        from fairness.bias_detector import BiasDetector
+        rates = {"male": 0.5, "female": 0.5}
+        spd = BiasDetector.statistical_parity_difference(rates)
+        assert spd == 0.0
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

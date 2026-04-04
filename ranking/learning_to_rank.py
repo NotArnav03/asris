@@ -50,10 +50,7 @@ class LearningToRank:
             "tfidf_similarity",
             "skill_coverage",
             "num_matched_skills",
-            "num_jd_skills",
             "keyword_overlap_ratio",
-            "resume_word_count",
-            "jd_word_count",
         ]
 
     def _extract_features(
@@ -127,10 +124,7 @@ class LearningToRank:
                 tfidf_sim,
                 coverage,
                 len(matched),
-                len(jd_skills),
                 kw_overlap,
-                resume_wc,
-                jd_wc,
             ])
             labels.append(row["label"])
             job_ids.append(job_id)

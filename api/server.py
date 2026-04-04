@@ -297,6 +297,99 @@ async def cache_stats():
     return manager.cache_stats()
 
 
+@app.post("/audit")
+async def audit_fairness(request: RankRequest):
+    """
+    Run a fairness audit on ranked candidates.
+    Returns bias metrics + fairness-constrained re-ranking.
+    """
+    if not request.resume_texts:
+        raise HTTPException(status_code=400, detail="No resume texts provided")
+
+    manager = get_embedding_manager()
+    jd_emb = manager.sbert_model.encode(request.jd_text, convert_to_numpy=True)
+    resume_embs = manager.encode_sbert(request.resume_texts, use_cache=False)
+
+    # Score candidates
+    scores = {}
+    for filename, emb in resume_embs.items():
+        scores[filename] = float(manager.cosine_similarity(jd_emb, emb))
+
+    # Bias audit
+    from fairness.bias_detector import BiasDetector
+    detector = BiasDetector()
+    audit = detector.audit_ranking_bias(request.resume_texts, scores)
+
+    # Fairness-constrained re-ranking
+    from ranking.fairness_ranker import FairnessConstrainedRanker, RankedCandidate
+    candidates = [
+        RankedCandidate(name=f, score=s, group=detector.detect_gender_proxy(request.resume_texts[f]))
+        for f, s in sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    ]
+
+    fcr = FairnessConstrainedRanker(threshold=0.8)
+    report = fcr.rerank(candidates)
+
+    return {
+        "bias_audit": audit,
+        "fcr_report": {
+            "original_air": report.original_air,
+            "final_air": report.final_air,
+            "num_swaps": report.num_swaps,
+            "displacement_cost": report.displacement_cost,
+            "fairness_satisfied": report.fairness_satisfied,
+            "original_ranking": report.original_ranking,
+            "fair_ranking": report.fair_ranking,
+            "group_stats": report.group_stats,
+            "pareto_points": report.pareto_points,
+        },
+    }
+
+
+@app.post("/counterfactual")
+async def counterfactual_explain(request: ExplainRequest):
+    """
+    Generate counterfactual explanation for a candidate.
+    Shows which missing skills would most improve their ranking.
+    """
+    from explainability.counterfactual import CounterfactualExplainer
+
+    explainer = CounterfactualExplainer()
+    manager = get_embedding_manager()
+
+    # Compute score
+    jd_emb = manager.sbert_model.encode(request.jd_text, convert_to_numpy=True)
+    resume_emb = manager.sbert_model.encode(request.resume_text, convert_to_numpy=True)
+    score = float(manager.cosine_similarity(jd_emb, resume_emb))
+
+    report = explainer.explain_candidate(
+        candidate_name="uploaded_candidate",
+        candidate_score=score,
+        candidate_resume=request.resume_text,
+        jd_text=request.jd_text,
+        all_scores={"uploaded_candidate": score},
+        top_k=5,
+    )
+
+    return {
+        "candidate": report.candidate_name,
+        "original_rank": report.original_rank,
+        "original_score": report.original_score,
+        "potential_best_rank": report.potential_best_rank,
+        "skills_analyzed": report.total_skills_analyzed,
+        "improvements": [
+            {
+                "skill": imp.skill,
+                "score_delta": imp.score_delta,
+                "rank_improvement": imp.rank_improvement,
+                "counterfactual_score": imp.counterfactual_score,
+            }
+            for imp in report.top_improvements
+        ],
+        "summary": report.actionable_summary,
+    }
+
+
 # ─── Run Server ──────────────────────────────────────────────────
 
 if __name__ == "__main__":
