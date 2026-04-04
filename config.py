@@ -19,9 +19,14 @@ META_DIR = DATA_DIR / "metadata"
 EMBEDDING_CACHE_DIR = DATA_DIR / "embeddings_cache"
 EXPERIMENT_DIR = BASE_DIR / "experiments" / "results"
 
-# Ensure dirs exist
+# Ensure dirs exist — wrapped defensively because on Colab a symlinked
+# data/ directory makes Python 3.12 pathlib raise FileExistsError even
+# with exist_ok=True (is_dir() returns False on a broken symlink).
 for d in [PROCESSED_RESUME_DIR, LABELED_DIR, META_DIR, EMBEDDING_CACHE_DIR, EXPERIMENT_DIR]:
-    d.mkdir(parents=True, exist_ok=True)
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except (FileExistsError, OSError):
+        pass
 
 # ─── Model Configuration ────────────────────────────────────────
 SBERT_MODEL_NAME = "all-MiniLM-L6-v2"
