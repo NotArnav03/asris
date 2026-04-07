@@ -1,7 +1,7 @@
 % =====================================================================
 % FAIMR: Journal Extension — Applied Intelligence (Springer)
 % Document class: sn-jnl (Springer Nature LaTeX template, smallcondensed)
-% Required files: sn-article.cls, sn-basic.bst
+% Required files: sn-jnl.cls, sn-basic.bst
 % Download from: https://www.springernature.com/gp/authors/campaigns/latex-author-support
 % =====================================================================
 
@@ -14,7 +14,6 @@
 \usepackage{float}
 \usepackage{booktabs}
 \usepackage{multirow}
-\usepackage{adjustbox}
 \usepackage{url}
 \def\UrlFont{\rmfamily}
 
@@ -129,8 +128,8 @@ Table~\ref{tab:prior_comparison} presents a structured comparison of representat
 \centering
 \caption{Comparison of prior ARS methods and FAIMR across five methodology dimensions. \checkmark = fully addressed; $\sim$ = partially addressed; $\times$ = not addressed. LTR = Learning-to-Rank; CF = Counterfactual; LL = Label Leakage.}
 \label{tab:prior_comparison}
-\begin{adjustbox}{max width=\linewidth}
-\begin{tabular}{llccccc}
+\small\setlength{\tabcolsep}{5pt}%
+\begin{tabular}{p{2.6cm}p{2.5cm}cccc}
 \toprule
 Method & Signal Type & Fairness & Explainability & LL-Free & Eval Rigor \\
 \midrule
@@ -143,7 +142,6 @@ Neural LTR~\cite{chen2023automated} & Multi-signal & $\times$ & $\times$ & $\sim
 \textbf{FAIMR (Ours)} & \textbf{Multi-signal} & $\checkmark$ & $\checkmark$ & $\checkmark$ & $\checkmark$ \\
 \bottomrule
 \end{tabular}
-\end{adjustbox}
 \end{table}
 
 % =====================================================================
@@ -436,7 +434,7 @@ Five configurations with XGBoost ($K{=}200$ trees, depth 6, $\eta{=}0.1$):
 \centering
 \caption{Comparison with established retrieval methods (5-fold GroupKFold CV, domain-match pairs). Best in bold.}
 \label{tab:baselines}
-\begin{adjustbox}{max width=\linewidth}
+\small\setlength{\tabcolsep}{4pt}%
 \begin{tabular}{llccccc}
 \toprule
 & Method & Accuracy & F1 & AUC & NDCG@5 & P@5 \\
@@ -451,7 +449,6 @@ Five configurations with XGBoost ($K{=}200$ trees, depth 6, $\eta{=}0.1$):
 & \textbf{FAIMR (Ours)} & $\mathbf{0.6368 \pm 0.0060}$ & $\mathbf{0.6798 \pm 0.0084}$ & $\mathbf{0.7190 \pm 0.0097}$ & $\mathbf{0.7119 \pm 0.0079}$ & $\mathbf{0.6932 \pm 0.0074}$ \\
 \bottomrule
 \end{tabular}
-\end{adjustbox}
 \end{table}
 
 Table~\ref{tab:baselines} presents the comparison. FAIMR achieves the highest scores across all metrics, with an AUC of $0.719$ substantially outperforming every baseline.
@@ -721,7 +718,7 @@ The authors thank the anonymous reviewers for their constructive feedback. This 
 
 \textbf{Author Contributions.} Arnav Gupta: Conceptualization, Methodology, Software, Formal Analysis, Writing -- Original Draft. Virendrakumar A. Dhotre: Supervision, Writing -- Review \& Editing.
 
-\bibliographystyle{sn-vancouver-num}
+\bibliographystyle{sn-basic}
 \bibliography{references}
 
 \end{document}
