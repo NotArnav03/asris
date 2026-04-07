@@ -1,14 +1,13 @@
 % =====================================================================
-% FAIMR: Journal Extension — Applied Intelligence / JIIS (Springer)
-% Extended from FAIMR_SAI.tex (SAI 2026 conference version, 9 pages)
-% Target: 16–20 pages
-% Document class: article (Overleaf-compatible, no external .cls needed)
+% FAIMR: Journal Extension — Applied Intelligence (Springer)
+% Document class: sn-jnl (Springer Nature LaTeX template, smallcondensed)
+% Required files: sn-article.cls, sn-basic.bst
+% Download from: https://www.springernature.com/gp/authors/campaigns/latex-author-support
 % =====================================================================
 
-\documentclass[12pt,a4paper]{article}
+\documentclass[smallcondensed]{sn-jnl}
 
-\usepackage{mathptmx}          % Times font (Springer standard)
-\usepackage{amsmath,amssymb,amsfonts,amsthm}
+\usepackage{amsmath,amssymb,amsfonts}
 \usepackage{algorithmic}
 \usepackage{graphicx}
 \usepackage{float}
@@ -16,50 +15,29 @@
 \usepackage{multirow}
 \usepackage[colorlinks=true,linkcolor=black,citecolor=black,urlcolor=black]{hyperref}
 \usepackage{url}
-\usepackage{geometry}
-\geometry{a4paper, margin=2.5cm}
-\usepackage{setspace}
-\onehalfspacing
-\usepackage{fancyhdr}
-\pagestyle{fancy}
-\fancyhf{}
-\fancyhead[L]{\small\textit{Applied Intelligence}}
-\fancyhead[R]{\small\textit{FAIMR: Fairness-Aware Resume Ranking}}
-\fancyfoot[C]{\thepage}
-\renewcommand{\headrulewidth}{0.4pt}
 \def\UrlFont{\rmfamily}
 
-% Theorem environments
-\newtheorem{theorem}{Theorem}
-\newtheorem{proposition}{Proposition}
-\newtheorem{definition}{Definition}
+% Custom theorem environment (theorem, proposition, definition built into sn-jnl)
 \newtheorem{empiricalobs}{Empirical Observation}
-
-% Keywords command
-\newcommand{\keywords}[1]{\par\noindent\textbf{Keywords:} #1}
 
 \begin{document}
 
-\title{\textbf{FAIMR: A Fairness-Aware and Explainable Multi-Signal\\Framework for Automated Resume Ranking}}
+\title[FAIMR: Fairness-Aware Resume Ranking]{FAIMR: A Fairness-Aware and Explainable Multi-Signal Framework for Automated Resume Ranking}
 
-\author{
-  Arnav Gupta\thanks{Corresponding author. \texttt{arnav.g1010@gmail.com}} \quad
-  Virendrakumar A. Dhotre\thanks{\texttt{virendradhotre@gmail.com}}\\[4pt]
-  \small Department of Computer Science and Engineering (AI \& ML)\\
-  \small Vishwakarma Institute of Technology Pune\\
-  \small (Affiliated to Savitribai Phule Pune University, Pune--411037, Maharashtra, India)
-}
+\author*[1]{\fnm{Arnav} \sur{Gupta}}\email{arnav.g1010@gmail.com}
+\author[1]{\fnm{Virendrakumar A.} \sur{Dhotre}}\email{virendradhotre@gmail.com}
 
-\date{Received: \today\ \quad/\quad Accepted: --}
+\affil*[1]{\orgdiv{Department of Computer Science and Engineering (AI \& ML)},
+  \orgname{Vishwakarma Institute of Technology Pune},
+  \orgaddress{\city{Pune}, \postcode{411037}, \state{Maharashtra}, \country{India}}}
 
 \maketitle
-\thispagestyle{fancy}
 
 \begin{abstract}
-Automated Resume Screening (ARS) systems that rely on a single similarity signal suffer from keyword dilution, demographic bias, and decision opacity. We propose FAIMR (Fairness-Aware Explainable Multi-Signal Resume Re-ranking), a framework that fuses Sentence-BERT contextual embeddings, TF-IDF lexical similarity, and deterministic skill-graph coverage into a gradient-boosted Learning-to-Rank ensemble. We provide a theoretical analysis showing that the three signal families occupy complementary regions of the representation space, and that their non-linear fusion via gradient boosting captures feature interactions inaccessible to any single representation. A post-hoc Fairness-Constrained Re-ranking (FCR) algorithm enforces the four-fifths rule of Adverse Impact while provably minimizing rank displacement, and a counterfactual explainer identifies the minimal skill acquisition path to invert a rejection via greedy submodular optimization with formal approximation guarantees. Evaluation on 26,020 domain-stratified resume--job pairs with verified feature--label independence ($r_{\mathrm{pb}}{=}0.14$) shows that FAIMR achieves an AUC of $0.719 \pm 0.010$, outperforming BM25 ($0.604$), Doc2Vec ($0.596$), BERT Cross-Encoder ($0.585$), MPNet-SBERT ($0.656$), and Jaccard Skill Matching ($0.581$), with each signal increment confirmed statistically significant ($p < 0.002$). The FCR module achieves an Adverse Impact Ratio of $0.979$ with zero rank displacement on unbiased data, and a stress test under synthetic demographic skew confirms it restores AIR~$\geq 0.8$ at all skew levels. The counterfactual generator produces explanations for 5,158 rejected candidates with non-empty skill deficiencies (from 8,640 evaluated), averaging $1.10$ skills with mean latency $0.82$\,ms (median $0.62$\,ms) and $100\%$ greedy-optimal match rate. Cross-domain analysis across five professional sectors demonstrates that FAIMR's multi-signal gains are consistent and most pronounced in technical domains where skill-ontology coverage is richest. Feature importance analysis assigns the dominant share ($\approx 35\%$) to semantic similarity, with skill coverage providing $\approx 28\%$ complementary discriminative power, confirming the theoretical signal-complementarity argument.
+Automated Resume Screening (ARS) systems that rely on a single similarity signal suffer from keyword dilution, demographic bias, and decision opacity. We propose FAIMR (Fairness-Aware Explainable Multi-Signal Resume Re-ranking), a framework that fuses Sentence-BERT contextual embeddings, TF-IDF lexical similarity, and skill-graph coverage into a gradient-boosted Learning-to-Rank ensemble. We prove that the three signal families occupy complementary representational subspaces and that their non-linear fusion captures feature interactions inaccessible to any single representation. A post-hoc Fairness-Constrained Re-ranking (FCR) algorithm enforces the four-fifths rule of Adverse Impact while provably minimizing rank displacement, and a counterfactual explainer identifies the minimal skill acquisition path to invert a rejection via greedy submodular optimization with formal approximation guarantees. Evaluation on 26,020 domain-stratified resume--job pairs with verified feature--label independence ($r_{\mathrm{pb}}{=}0.14$) shows FAIMR achieves AUC $0.719 \pm 0.010$, outperforming BM25 ($0.604$), Doc2Vec ($0.596$), BERT Cross-Encoder ($0.585$), MPNet-SBERT ($0.656$), and Jaccard Skill Matching ($0.581$), with each increment statistically significant ($p < 0.002$). The FCR module achieves Adverse Impact Ratio $0.979$ on unbiased data and restores AIR~$\geq 0.8$ at all synthetic skew levels. The counterfactual generator explains 5,158 rejected candidates with non-empty skill deficiencies, averaging $1.10$ skills with median latency $0.62$\,ms and $100\%$ greedy-optimal match rate. Feature importance analysis confirms semantic similarity ($\approx 35\%$) and skill coverage ($\approx 28\%$) as dominant signals, validating the theoretical complementarity argument.
+\end{abstract}
 
 \keywords{Learning-to-Rank, Algorithmic Fairness, Natural Language Processing, Resume Screening, Explainable AI, Counterfactual Reasoning}
-\end{abstract}
 
 % =====================================================================
 \section{Introduction}
@@ -730,7 +708,17 @@ Looking forward, the most pressing extensions are hierarchical domain labeling t
 \section*{Acknowledgements}
 The authors thank the anonymous reviewers for their constructive feedback. This work was conducted at the Department of Computer Science and Engineering (AI \& ML), Vishwakarma Institute of Technology Pune. No external funding was received for this research.
 
-\bibliographystyle{spbasic}
+\section*{Declarations}
+
+\textbf{Funding.} No funding was received for conducting this study.
+
+\textbf{Competing Interests.} The authors have no competing interests to declare that are relevant to the content of this article.
+
+\textbf{Data Availability.} The resume dataset is publicly available on Kaggle (Resume Dataset, Gaurav Dutta). The job description dataset is derived from the LinkedIn Job Postings dataset (Kaggle). The complete codebase and evaluation scripts are available at \url{https://github.com/NotArnav03/asris}. Processed feature vectors and trained models will be released upon acceptance.
+
+\textbf{Author Contributions.} Arnav Gupta: Conceptualization, Methodology, Software, Formal Analysis, Writing -- Original Draft. Virendrakumar A. Dhotre: Supervision, Writing -- Review \& Editing.
+
+\bibliographystyle{sn-basic}
 \bibliography{references}
 
 \end{document}
