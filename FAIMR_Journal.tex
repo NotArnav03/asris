@@ -8,16 +8,22 @@
 \documentclass[smallcondensed]{sn-jnl}
 
 \usepackage{amsmath,amssymb,amsfonts}
+\usepackage{amsthm}
 \usepackage{algorithmic}
 \usepackage{graphicx}
 \usepackage{float}
 \usepackage{booktabs}
 \usepackage{multirow}
-\usepackage[colorlinks=true,linkcolor=black,citecolor=black,urlcolor=black]{hyperref}
 \usepackage{url}
 \def\UrlFont{\rmfamily}
 
-% Custom theorem environment (theorem, proposition, definition built into sn-jnl)
+% hyperref is loaded by sn-jnl — configure via \hypersetup only
+\hypersetup{colorlinks=true,linkcolor=black,citecolor=black,urlcolor=black}
+
+% Theorem environments
+\newtheorem{theorem}{Theorem}
+\newtheorem{proposition}{Proposition}
+\newtheorem{definition}{Definition}
 \newtheorem{empiricalobs}{Empirical Observation}
 
 \begin{document}
@@ -381,7 +387,6 @@ Table~\ref{tab:label_quality} extends this analysis to all five ranking signals,
 \centering
 \caption{Point-biserial correlation and Cohen's $d$ between each ranking signal and the domain-match label ($n = 26{,}020$ pairs). All $r_{pb}$ values are positive and statistically significant ($p < 0.001$), confirming that domain-match is a valid relevance proxy for all five ranking signals. $^{*}$ denotes $p < 0.001$.}
 \label{tab:label_quality}
-{\small
 \begin{tabular}{lcccc}
 \toprule
 Signal & $r_{pb}$ & 95\% CI & Cohen's $d$ & Effect \\
@@ -392,7 +397,7 @@ Skill Coverage Ratio & $0.1355^{*}$ & $[0.124,\;0.147]$ & $0.2735$ & small \\
 Num.\ Matched Skills & $0.1304^{*}$ & $[0.118,\;0.142]$ & $0.2630$ & small \\
 Keyword Overlap      & $0.1167^{*}$ & $[0.105,\;0.129]$ & $0.2351$ & small \\
 \bottomrule
-\end{tabular}}
+\end{tabular}
 \end{table}
 
 \subsubsection{Hard Negative Sampling}
@@ -530,7 +535,6 @@ Mean Displacement $\mathcal{D}$ & 0.0 \\
 \centering
 \caption{FCR stress test under synthetic demographic skew. Groups assigned via name/pronoun/title gender detection ($n{=}1{,}177$ known-gender candidates, selection cutoff $k{=}0.2n{=}235$). AIR\textsubscript{b} and AIR\textsubscript{a} are Adverse Impact Ratios before and after FCR re-ranking. $\mathcal{D}$ = mean absolute rank displacement. FCR restores AIR~$\geq 0.8$ at all skew levels.}
 \label{tab:fcr_stress}
-{\small
 \begin{tabular}{@{}rccccr@{}}
 \toprule
 Skew (\%) & AIR\textsubscript{b} & AIR\textsubscript{a} & 4/5 Rule & Swaps & $\mathcal{D}$ \\
@@ -543,14 +547,13 @@ Skew (\%) & AIR\textsubscript{b} & AIR\textsubscript{a} & 4/5 Rule & Swaps & $\m
 25 & 0.000 & 0.803 & \checkmark & 104 & 54.522 \\
 30 & 0.000 & 0.803 & \checkmark & 104 & 66.121 \\
 \bottomrule
-\end{tabular}}
+\end{tabular}
 \end{table}
 
 \begin{table}[t]
 \centering
 \caption{Per-fold FCR results at 30\% demographic skew (5-fold GroupKFold by job\_id). Each fold is an independent subset of JDs and candidates. FCR restores AIR~$\geq 0.8$ in all folds.}
 \label{tab:fcr_stress_folds}
-{\small
 \begin{tabular}{@{}rccccc@{}}
 \toprule
 Fold & $n$ & AIR\textsubscript{b} & AIR\textsubscript{a} & 4/5 Rule & Swaps \\
@@ -563,7 +566,7 @@ Fold & $n$ & AIR\textsubscript{b} & AIR\textsubscript{a} & 4/5 Rule & Swaps \\
 \midrule
 Mean & -- & -- & 0.837 & \checkmark & 21 \\
 \bottomrule
-\end{tabular}}
+\end{tabular}
 \end{table}
 
 Three observations emerge. First, FCR \textit{successfully restores} AIR~$\geq 0.8$ at every skew level, validating the algorithm's correctness guarantee (Theorem~\ref{thm:fcr}). Even at 30\% skew, where the pre-FCR AIR collapses to $0.000$ (complete demographic exclusion), FCR restores compliance through 104 swaps. The per-fold results in Table~\ref{tab:fcr_stress_folds} confirm this holds independently across all 5 folds, with post-FCR AIR ranging from 0.804 to 0.870.
@@ -582,7 +585,6 @@ The stress test demonstrates that FCR is not merely a dormant safeguard but a fu
 \centering
 \caption{Counterfactual explanation statistics over all 8,640 rejected candidates (5,158 with non-empty skill deficiencies). Greedy-optimal rate verified by brute-force enumeration for $|\Delta| \leq 8$.}
 \label{tab:counterfactual}
-{\small
 \begin{tabular}{@{}lr@{}}
 \toprule
 Metric & Value \\
@@ -595,7 +597,7 @@ Median / Std / Max $|\delta^*|$ & 1.0 / 0.31 / 3 \\
 Mean / Median latency & 0.82 / 0.62 ms \\
 Greedy = Optimal & 100\% (6,126/6,126) \\
 \bottomrule
-\end{tabular}}
+\end{tabular}
 \end{table}
 
 Table~\ref{tab:counterfactual} reports counterfactual explanation statistics evaluated on the \textit{entire} rejected candidate set ($n = 5{,}158$ candidates with non-empty skill deficiencies), not a subsample. The mean $|\delta^*| = 1.10$ indicates that most rejections pivot on a \textit{single} missing skill (median $= 1.0$), with a maximum of only 3 skills required. This provides highly actionable feedback (\textit{e.g.}, ``Adding \textit{Docker} would move you from rank~\#7 to rank~\#3''). The low variance ($\sigma = 0.31$) confirms that explanation complexity is consistently bounded.
