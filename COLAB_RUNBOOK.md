@@ -1,14 +1,12 @@
 # Colab Runbook — FAIMR Experiments
 
-Run these cells in a **fresh Colab notebook** in order.
-Each script produces numbers or LaTeX tables that replace values in the paper.
+Run these cells **in order** in a fresh Colab notebook.
 
 ---
 
-## Cell 1 — Clone the repo
+## Cell 1 — Clone and enter repo
 
 ```python
-# Make sure we're at /content before cloning
 import os
 os.chdir("/content")
 ```
@@ -18,9 +16,12 @@ os.chdir("/content")
 ```
 
 ```python
-# Move into the repo — all subsequent cells run from here
 os.chdir("/content/asris")
-print("CWD:", os.getcwd())   # should print /content/asris
+print("CWD:", os.getcwd())   # must print /content/asris
+```
+
+```bash
+!git pull origin main        # get the latest fixes
 ```
 
 ---
@@ -29,75 +30,108 @@ print("CWD:", os.getcwd())   # should print /content/asris
 
 ```bash
 !pip install -q \
-  sentence-transformers \
-  xgboost \
-  scikit-learn \
-  scipy \
-  pandas \
-  numpy \
-  tqdm \
-  rank-bm25 \
-  gensim \
-  pdfplumber
+  sentence-transformers xgboost scikit-learn scipy \
+  pandas numpy tqdm rank-bm25 gensim pdfplumber
 ```
 
 ---
 
-## Cell 3 — Mount Drive and link data
-
-Your `data/` folder must contain:
-```
-data/
-  labeled/
-    domain_match_pairs.csv
-  processed/
-    resumes_cleaned/        ← .txt resume files
-  raw/
-    job_descriptions/
-      postings_balanced.csv
-      jobs/job_skills.csv
-      mappings/skills.csv
-```
+## Cell 3 — Mount Drive
 
 ```python
 from google.colab import drive
 drive.mount("/content/drive")
 ```
 
-```python
-import os, pathlib
+---
 
-# Set this to wherever your data folder lives on Drive
+## Cell 4 — Link your data  ⚠️ Read this carefully
+
+The scripts expect this layout under `/content/asris/data/`:
+
+```
+data/
+  labeled/
+    domain_match_pairs.csv
+  processed/
+    resumes_cleaned/        ← one .txt file per resume
+  raw/
+    job_descriptions/
+      postings_balanced.csv
+      jobs/
+        job_skills.csv
+      mappings/
+        skills.csv
+```
+
+**Option A — your data is already on Google Drive**
+
+```python
+import os
+
+# Change this to wherever your data folder is on Drive
 DRIVE_DATA = "/content/drive/MyDrive/asris_data/data"
 
 repo_data = "/content/asris/data"
 
-# If data is on Drive, symlink it (skip if you're uploading data directly)
+if os.path.islink(repo_data):
+    os.unlink(repo_data)          # remove stale symlink if any
+
 if not os.path.exists(repo_data):
     os.symlink(DRIVE_DATA, repo_data)
-    print("Symlinked:", repo_data, "->", DRIVE_DATA)
+    print("Linked:", repo_data, "->", DRIVE_DATA)
 else:
-    print("data/ already exists at", repo_data)
-
-# Verify the critical files are reachable
-checks = [
-    "data/labeled/domain_match_pairs.csv",
-    "data/processed/resumes_cleaned",
-    "data/raw/job_descriptions/postings_balanced.csv",
-]
-for p in checks:
-    exists = os.path.exists(p)
-    print(f"  {'OK' if exists else 'MISSING'}  {p}")
+    print("data/ already exists — skipping symlink")
 ```
 
-> If any path shows **MISSING**, fix your Drive path in `DRIVE_DATA` before continuing.
+**Option B — upload a zip from your local machine**
+
+```python
+from google.colab import files
+uploaded = files.upload()   # pick your data.zip in the dialog
+```
+
+```bash
+!unzip -q data.zip -d /content/asris/
+```
 
 ---
 
-## Cell 4 — Script 1: Counterfactual Re-evaluation  ⚠️ Run this first
+## Cell 5 — Verify data is reachable  ← run this before anything else
 
-This replaces the counterfactual numbers in the paper.
-The old numbers were computed with a broken implementation.
+```python
+import os
+
+required = {
+    "Labeled pairs":      "data/labeled/domain_match_pairs.csv",
+    "Resumes dir":        "data/processed/resumes_cleaned",
+    "JD postings":        "data/raw/job_descriptions/postings_balanced.csv",
+    "Job skills":         "data/raw/job_descriptions/jobs/job_skills.csv",
+    "Skills map":         "data/raw/job_descriptions/mappings/skills.csv",
+}
+
+all_ok = True
+for name, path in required.items():
+    ok = os.path.exists(path)
+    print(f"  {'OK  ' if ok else 'MISS'} {name:20s}  {path}")
+    if not ok:
+        all_ok = False
+
+if all_ok:
+    print("\n  All data files found. Ready to run experiments.")
+else:
+    print("\n  Fix the MISSING paths above before continuing.")
+```
+
+**Only proceed once all lines print `OK`.**
+
+---
+
+## Cell 6 — Script 1: Counterfactual Re-evaluation  ⚠️ Run first
+
+Replaces the counterfactual numbers currently in the paper
+(mean |δ*|, greedy-optimal rate, latency). The old numbers were from
+a broken implementation.
 
 **Expected runtime: 20–40 min on Colab CPU**
 
@@ -113,13 +147,14 @@ At the end you will see:
   Abstract/Table: Greedy-optimal = XX.X%
 ```
 
-Copy the printed LaTeX table into your paper to replace `\label{tab:counterfactual}`.
+Copy the LaTeX table into your paper to replace `\label{tab:counterfactual}`.
 
 ---
 
-## Cell 5 — Script 2: Label Quality Validation
+## Cell 7 — Script 2: Label Quality Validation
 
-New table defending against *"domain-match is not a hiring-outcome label"*.
+Produces a new table defending the domain-match labels against the
+reviewer concern *"this is not a hiring-outcome label"*.
 Add it to Section 3 (Data) or the Appendix.
 
 **Expected runtime: 15–25 min**
@@ -137,10 +172,10 @@ Copy the LaTeX table (`\label{tab:label_quality}`) into the paper.
 
 ---
 
-## Cell 6 — Script 3: FCR Stress Test
+## Cell 8 — Script 3: FCR Stress Test
 
-The old version used random hash-based groups. This version uses the
-gender detector on real resume text.
+The old version used random hash-based groups. This uses the gender
+detector on real resume text.
 
 **Expected runtime: 5–10 min**
 
@@ -148,45 +183,25 @@ gender detector on real resume text.
 !python experiments/fcr_stress_test.py 2>&1 | tee /tmp/fcr_stress.log
 ```
 
-Check the output for:
-- **Detection coverage** — what % of resumes got a gender label
-- Whether FCR restores AIR >= 0.8 in **all 5 folds** at 30% skew
-
 Replace `\label{tab:fcr_stress}` and add `\label{tab:fcr_stress_folds}` in the paper.
 
-> **If coverage is below ~30%:** your resume files have few gender signals
-> (common for anonymised CVs). Add a sentence to the paper:
-> *"Gender proxy detection achieved X% coverage; FCR correctness was
-> additionally validated via synthetic group assignment (Section X)."*
+> **If coverage is below ~30%:** add a sentence to the paper:
+> *"Gender proxy detection achieved X% coverage on this corpus; FCR
+> correctness was additionally validated via synthetic group assignment."*
 
 ---
 
-## Cell 7 — Script 4: Ablation + Paired t-tests (if needed)
-
-Only run this if you need to regenerate the ablation table.
-
-```bash
-!python experiments/ablation_stats.py 2>&1 | tee /tmp/ablation.log
-```
-
----
-
-## Cell 8 — Save outputs to Drive
+## Cell 9 — Save logs to Drive
 
 ```python
 import shutil, os
 
-output_dir = "/content/drive/MyDrive/asris_results"
-os.makedirs(output_dir, exist_ok=True)
+out = "/content/drive/MyDrive/asris_results"
+os.makedirs(out, exist_ok=True)
 
-for log in [
-    "/tmp/cf_reeval.log",
-    "/tmp/label_quality.log",
-    "/tmp/fcr_stress.log",
-    "/tmp/ablation.log",
-]:
+for log in ["/tmp/cf_reeval.log", "/tmp/label_quality.log", "/tmp/fcr_stress.log"]:
     if os.path.exists(log):
-        shutil.copy(log, output_dir)
+        shutil.copy(log, out)
         print("Saved:", log)
 ```
 
@@ -194,13 +209,11 @@ for log in [
 
 ## Paper update checklist
 
-After running all scripts, update the paper with fresh numbers:
-
-- [ ] `\label{tab:counterfactual}` — replace with output from Script 1
+- [ ] `\label{tab:counterfactual}` — replace with Script 1 output
 - [ ] Abstract: *"averaging X.XX skills"* — update mean |δ*|
 - [ ] Abstract: *"mean latency X.XX ms (median X.XX ms)"* — update latency
 - [ ] Abstract: *"100% greedy-optimal match rate"* — update if changed
 - [ ] `\label{tab:label_quality}` — insert new table from Script 2 (Section 3)
-- [ ] `\label{tab:fcr_stress}` — replace with output from Script 3
+- [ ] `\label{tab:fcr_stress}` — replace with Script 3 output
 - [ ] `\label{tab:fcr_stress_folds}` — insert per-fold table from Script 3
 - [ ] FCR limitations: add detection coverage % from Script 3 output

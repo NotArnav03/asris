@@ -283,6 +283,8 @@ slider.addEventListener('input', () => {
 
 // ─── Rank Candidates ────────────────────────────────────────────
 
+let lastRankContext = { jdText: '', resumes: {}, ranked: [] };
+
 document.getElementById('rankBtn').addEventListener('click', async () => {
     const btn = document.getElementById('rankBtn');
     const jdText = document.getElementById('jdInput').value.trim();
@@ -329,6 +331,11 @@ document.getElementById('rankBtn').addEventListener('click', async () => {
 
         if (!res.ok) throw new Error(`Server error: ${res.status}`);
         const data = await res.json();
+        lastRankContext = {
+            jdText: jdText,
+            resumes: resumeTexts,
+            ranked: data.ranked_candidates,
+        };
         displayRankResults(data);
         showToast(`Ranked ${data.total_candidates} candidates successfully!`, 'success');
     } catch (err) {
@@ -357,35 +364,235 @@ function displayRankResults(data) {
         const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${result.rank}`;
         const barWidth = maxScore > 0 ? (Math.abs(result.score) / maxScore) * 100 : 0;
 
-        const card = document.createElement('div');
-        card.className = 'result-card';
-        card.style.animationDelay = `${idx * 0.08}s`;
+        const wrapper = document.createElement('div');
+        wrapper.className = 'result-item';
 
-        card.innerHTML = `
-            <div class="result-rank ${rankClass}">${medal}</div>
-            <div class="result-info">
-                <div class="result-name">${escapeHtml(result.filename)}</div>
-                <div class="result-bar-bg">
-                    <div class="result-bar-fill" style="width: 0%"></div>
+        wrapper.innerHTML = `
+            <div class="result-card" style="animation-delay: ${idx * 0.08}s">
+                <div class="result-rank ${rankClass}">${medal}</div>
+                <div class="result-info">
+                    <div class="result-name">${escapeHtml(result.filename)}</div>
+                    <div class="result-bar-bg">
+                        <div class="result-bar-fill" style="width: 0%"></div>
+                    </div>
                 </div>
+                <div class="result-score">
+                    <div class="result-score-value">${(result.score * 100).toFixed(1)}</div>
+                    <div class="result-score-label">Match Score</div>
+                </div>
+                <button class="btn-why-rank" data-idx="${idx}" type="button">
+                    <span class="why-text">Why this rank?</span>
+                    <span class="why-caret">▾</span>
+                </button>
             </div>
-            <div class="result-score">
-                <div class="result-score-value">${(result.score * 100).toFixed(1)}</div>
-                <div class="result-score-label">Match Score</div>
-            </div>
+            <div class="rank-explanation" id="rank-exp-${idx}"></div>
         `;
 
-        list.appendChild(card);
+        list.appendChild(wrapper);
 
         // Animate bar
         requestAnimationFrame(() => {
             setTimeout(() => {
-                card.querySelector('.result-bar-fill').style.width = `${barWidth}%`;
+                wrapper.querySelector('.result-bar-fill').style.width = `${barWidth}%`;
             }, 100 + idx * 80);
+        });
+
+        // Why-this-rank toggle
+        wrapper.querySelector('.btn-why-rank').addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleRankExplanation(idx);
         });
     });
 
     container.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function toggleRankExplanation(idx) {
+    const expDiv = document.getElementById(`rank-exp-${idx}`);
+    const btn = document.querySelector(`.btn-why-rank[data-idx="${idx}"]`);
+    if (!expDiv || !btn) return;
+
+    const textEl = btn.querySelector('.why-text');
+    const caretEl = btn.querySelector('.why-caret');
+
+    // Toggle visibility if already loaded
+    if (expDiv.classList.contains('open')) {
+        expDiv.classList.remove('open');
+        textEl.textContent = 'Why this rank?';
+        caretEl.textContent = '▾';
+        return;
+    }
+
+    if (expDiv.dataset.loaded === 'true') {
+        expDiv.classList.add('open');
+        textEl.textContent = 'Hide explanation';
+        caretEl.textContent = '▴';
+        return;
+    }
+
+    // First load — fetch /explain
+    const candidate = lastRankContext.ranked[idx];
+    const resumeText = lastRankContext.resumes[candidate.filename];
+
+    if (!resumeText) {
+        showToast('Resume text not available for this candidate', 'error');
+        return;
+    }
+
+    expDiv.classList.add('open');
+    expDiv.innerHTML = `
+        <div class="rank-exp-loading">
+            <span class="upload-spinner"></span>
+            Analyzing why this candidate ranked at #${candidate.rank}...
+        </div>
+    `;
+    textEl.textContent = 'Hide explanation';
+    caretEl.textContent = '▴';
+    btn.disabled = true;
+
+    try {
+        const res = await fetch(`${API_BASE}/explain`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                jd_text: lastRankContext.jdText,
+                resume_text: resumeText,
+            }),
+        });
+        if (!res.ok) throw new Error(`Server error: ${res.status}`);
+        const data = await res.json();
+
+        renderRankExplanation(expDiv, idx, candidate, data);
+        expDiv.dataset.loaded = 'true';
+    } catch (err) {
+        expDiv.innerHTML = `<div class="rank-exp-error">Failed to load explanation: ${escapeHtml(err.message)}</div>`;
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+function renderRankExplanation(container, idx, candidate, data) {
+    const ranked = lastRankContext.ranked;
+    const rank = candidate.rank;
+    const score = candidate.score;
+    const total = ranked.length;
+
+    // ── Rank Context block ──
+    let rankContextHtml;
+    if (rank === 1) {
+        const second = ranked[1];
+        if (second) {
+            const gap = (score - second.score) * 100;
+            rankContextHtml = `
+                <p class="reasoning-text">
+                    🏆 <strong>Top-ranked of ${total} candidates.</strong> This resume scored
+                    higher than every other submission. The closest competitor was
+                    <strong>${escapeHtml(second.filename)}</strong> at #2, trailing by
+                    <strong>${gap.toFixed(2)} points</strong>
+                    (${(second.score * 100).toFixed(1)}%).
+                </p>
+            `;
+        } else {
+            rankContextHtml = `<p class="reasoning-text">🏆 <strong>Top-ranked</strong> — only one candidate was submitted.</p>`;
+        }
+    } else {
+        const leader = ranked[0];
+        const next = ranked[idx + 1];
+        const gapToTop = (leader.score - score) * 100;
+        const parts = [
+            `Ranked <strong>#${rank} of ${total}</strong> with <strong>${(score * 100).toFixed(1)}%</strong>.`,
+            `Behind <strong>#1 (${escapeHtml(leader.filename)})</strong> by <strong>${gapToTop.toFixed(2)} points</strong>.`,
+        ];
+        if (next) {
+            const gapToNext = (score - next.score) * 100;
+            parts.push(`Ahead of #${next.rank} (${escapeHtml(next.filename)}) by ${gapToNext.toFixed(2)} points.`);
+        }
+        rankContextHtml = `<p class="reasoning-text">${parts.join(' ')}</p>`;
+    }
+
+    // ── Reasoning data ──
+    const sbert = (data.scores && data.scores.sbert_similarity) || 0;
+    const pct = sbert * 100;
+    const skillCov = (data.scores && data.scores.skill_coverage) || 0;
+    const matched = (data.skill_analysis && data.skill_analysis.matched_skills) || [];
+    const missing = (data.skill_analysis && data.skill_analysis.missing_skills) || [];
+    const shared = (data.keyword_overlap && data.keyword_overlap.shared_keywords) || [];
+    const jdOnly = (data.keyword_overlap && data.keyword_overlap.jd_only_keywords) || [];
+    const overlapRatio = (data.keyword_overlap && data.keyword_overlap.overlap_ratio) || 0;
+
+    const matchedSet = new Set(matched);
+    const missingSet = new Set(missing);
+    const boosters = [...matched, ...shared.filter(k => !matchedSet.has(k))].slice(0, 10);
+    const drainers = [...missing, ...jdOnly.filter(k => !missingSet.has(k))].slice(0, 10);
+
+    container.innerHTML = `
+        <div class="reasoning-block">
+            <div class="reasoning-label">📊 Rank Context</div>
+            ${rankContextHtml}
+        </div>
+
+        <div class="reasoning-block">
+            <div class="reasoning-label">🎯 Score Breakdown</div>
+            <div class="rank-score-grid">
+                <div class="rank-score-cell">
+                    <div class="rank-score-cell-value">${pct.toFixed(1)}%</div>
+                    <div class="rank-score-cell-label">Semantic Similarity</div>
+                </div>
+                <div class="rank-score-cell">
+                    <div class="rank-score-cell-value">${(skillCov * 100).toFixed(0)}%</div>
+                    <div class="rank-score-cell-label">Skill Coverage (${matched.length}/${matched.length + missing.length})</div>
+                </div>
+                <div class="rank-score-cell">
+                    <div class="rank-score-cell-value">${(overlapRatio * 100).toFixed(0)}%</div>
+                    <div class="rank-score-cell-label">Keyword Overlap</div>
+                </div>
+            </div>
+        </div>
+
+        ${boosters.length > 0 ? `
+        <div class="reasoning-block">
+            <div class="reasoning-label">⬆️ Why this candidate ranked here</div>
+            <p class="reasoning-text">
+                These concepts in the resume align with the JD and pulled the score up:
+            </p>
+            <div class="skill-tags">
+                ${boosters.map(s => `<span class="skill-tag matched">${escapeHtml(s)}</span>`).join('')}
+            </div>
+        </div>` : ''}
+
+        ${drainers.length > 0 ? `
+        <div class="reasoning-block">
+            <div class="reasoning-label">⬇️ What pulled the rank down</div>
+            <p class="reasoning-text">
+                These JD requirements are missing from the resume — each one widens
+                the gap from the top:
+            </p>
+            <div class="skill-tags">
+                ${drainers.map(s => `<span class="skill-tag missing">${escapeHtml(s)}</span>`).join('')}
+            </div>
+        </div>` : ''}
+
+        <div class="reasoning-block reasoning-bottom-line">
+            <div class="reasoning-label">💡 Bottom Line</div>
+            <p class="reasoning-text">${generateRankBottomLine(rank, total, pct, matched.length, missing.length, ranked)}</p>
+        </div>
+    `;
+}
+
+function generateRankBottomLine(rank, total, pct, matchedCount, missingCount, ranked) {
+    if (rank === 1) {
+        const second = ranked[1];
+        const gapStr = second ? ` and outscored the runner-up by ${((ranked[0].score - second.score) * 100).toFixed(1)} points` : '';
+        return `This candidate placed first out of ${total} because the embedding model found the strongest semantic alignment between this resume and the JD (${pct.toFixed(1)}%), with ${matchedCount} matched skill${matchedCount !== 1 ? 's' : ''}${gapStr}. Other candidates either had fewer matched skills, more missing requirements, or used vocabulary that diverged from the JD's domain.`;
+    } else if (rank === 2) {
+        const leader = ranked[0];
+        const gap = ((leader.score - ranked[rank - 1].score) * 100).toFixed(1);
+        return `Strong runner-up at #${rank} of ${total}. Just <strong>${gap} points</strong> behind <strong>${escapeHtml(leader.filename)}</strong>. With ${matchedCount} matched skill${matchedCount !== 1 ? 's' : ''} this candidate is competitive — closing the gap would mean covering the ${missingCount} missing requirement${missingCount !== 1 ? 's' : ''} above.`;
+    } else if (rank <= Math.ceil(total / 2)) {
+        return `Ranked #${rank} of ${total} — mid-pack. The candidate covers part of the role with ${matchedCount} matched skill${matchedCount !== 1 ? 's' : ''}, but ${missingCount} JD requirement${missingCount !== 1 ? 's' : ''} not present in the resume kept this candidate from climbing higher.`;
+    } else {
+        return `Ranked #${rank} of ${total} — bottom half. With only ${pct.toFixed(1)}% semantic alignment and ${missingCount} missing skill${missingCount !== 1 ? 's' : ''}, this resume's professional vocabulary and domain sit further from the JD than the higher-ranked candidates.`;
+    }
 }
 
 // ─── Explain Match ──────────────────────────────────────────────
@@ -547,7 +754,115 @@ function displayExplanation(data) {
         `;
     }
 
+    // Semantic similarity reasoning
+    displaySemanticReasoning(data);
+
     container.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function displaySemanticReasoning(data) {
+    const container = document.getElementById('semanticReasoning');
+    if (!container) return;
+
+    const sbert = (data.scores && data.scores.sbert_similarity) || 0;
+    const pct = sbert * 100;
+
+    let band, bandClass, bandText;
+    if (pct >= 70) {
+        band = 'Very Strong';
+        bandClass = 'high';
+        bandText = 'The resume is conceptually almost interchangeable with the job description. Both texts describe the same kind of role, domain, and seniority — the embeddings land in nearly the same region of vector space.';
+    } else if (pct >= 55) {
+        band = 'Strong';
+        bandClass = 'high';
+        bandText = 'The resume and JD share substantial conceptual ground. The model recognizes that the candidate works in the same domain and uses similar professional vocabulary, even if exact phrasing differs.';
+    } else if (pct >= 40) {
+        band = 'Moderate';
+        bandClass = 'medium';
+        bandText = 'There is partial conceptual overlap. The candidate likely covers some of the role\'s subject matter but operates in an adjacent specialty or at a different level — embeddings are close but not aligned.';
+    } else if (pct >= 25) {
+        band = 'Weak';
+        bandClass = 'low';
+        bandText = 'The texts share only loose thematic overlap. The candidate\'s background touches the JD\'s domain peripherally — common professional language exists, but core requirements are not represented.';
+    } else {
+        band = 'Very Weak';
+        bandClass = 'low';
+        bandText = 'The resume and JD describe essentially different things. The embeddings sit in distant regions of vector space — different domains, different responsibilities, or different seniority altogether.';
+    }
+
+    const matched = (data.skill_analysis && data.skill_analysis.matched_skills) || [];
+    const missing = (data.skill_analysis && data.skill_analysis.missing_skills) || [];
+    const shared = (data.keyword_overlap && data.keyword_overlap.shared_keywords) || [];
+    const jdOnly = (data.keyword_overlap && data.keyword_overlap.jd_only_keywords) || [];
+
+    const matchedSet = new Set(matched);
+    const missingSet = new Set(missing);
+    const boosters = [...matched, ...shared.filter(k => !matchedSet.has(k))].slice(0, 10);
+    const drainers = [...missing, ...jdOnly.filter(k => !missingSet.has(k))].slice(0, 10);
+
+    container.innerHTML = `
+        <div class="reasoning-block">
+            <div class="reasoning-label">📚 What is Semantic Similarity?</div>
+            <p class="reasoning-text">
+                Semantic similarity measures how closely the job description and resume align in
+                <strong>meaning</strong> — not just shared words. Both texts are encoded by an SBERT
+                transformer (<code>all-MiniLM-L6-v2</code>) into 384-dimensional vectors that capture
+                conceptual content, then compared using <strong>cosine similarity</strong>.
+                A score of 100% means identical meaning; 0% means unrelated.
+            </p>
+        </div>
+
+        <div class="reasoning-block">
+            <div class="reasoning-label">🎯 Score Interpretation</div>
+            <div class="reasoning-score-row">
+                <div class="reasoning-score-value">${pct.toFixed(1)}%</div>
+                <div class="reasoning-score-band ${bandClass}">${band}</div>
+            </div>
+            <p class="reasoning-text">${bandText}</p>
+        </div>
+
+        ${boosters.length > 0 ? `
+        <div class="reasoning-block">
+            <div class="reasoning-label">⬆️ What's Boosting the Score</div>
+            <p class="reasoning-text">
+                These shared concepts appear in <em>both</em> the JD and the resume. They pull the
+                two embeddings closer together in vector space:
+            </p>
+            <div class="skill-tags">
+                ${boosters.map(s => `<span class="skill-tag matched">${escapeHtml(s)}</span>`).join('')}
+            </div>
+        </div>` : ''}
+
+        ${drainers.length > 0 ? `
+        <div class="reasoning-block">
+            <div class="reasoning-label">⬇️ What's Holding It Back</div>
+            <p class="reasoning-text">
+                These terms appear in the JD but are <em>missing</em> from the resume. Each absent
+                concept widens the gap between the two embeddings:
+            </p>
+            <div class="skill-tags">
+                ${drainers.map(s => `<span class="skill-tag missing">${escapeHtml(s)}</span>`).join('')}
+            </div>
+        </div>` : ''}
+
+        <div class="reasoning-block reasoning-bottom-line">
+            <div class="reasoning-label">💡 Bottom Line</div>
+            <p class="reasoning-text">${generateBottomLine(pct, matched.length, missing.length, shared.length)}</p>
+        </div>
+    `;
+}
+
+function generateBottomLine(pct, matchedCount, missingCount, sharedCount) {
+    const score = pct.toFixed(1);
+    if (pct >= 55) {
+        return `The <strong>${score}%</strong> similarity reflects strong alignment between the resume and the role. The model recognizes ${matchedCount} matched skill${matchedCount !== 1 ? 's' : ''} and ${sharedCount} overlapping keyword${sharedCount !== 1 ? 's' : ''}, suggesting this candidate is a viable semantic fit. Lower-ranked aspects (missing skills, phrasing differences) prevent it from being higher.`;
+    } else if (pct >= 40) {
+        return `The <strong>${score}%</strong> similarity indicates partial alignment. While ${matchedCount} skill${matchedCount !== 1 ? 's are' : ' is'} matched, ${missingCount} key requirement${missingCount !== 1 ? 's are' : ' is'} still missing. The candidate covers part of the role but has notable gaps that the embedding model picks up on.`;
+    } else if (pct >= 25) {
+        return `The <strong>${score}%</strong> similarity reflects limited alignment. Only ${matchedCount} of the JD's required skill${matchedCount !== 1 ? 's' : ''} appear in the resume, and ${missingCount} are missing. The candidate's professional vocabulary and domain only loosely overlap with what the JD describes.`;
+    } else {
+        return `The <strong>${score}%</strong> similarity reflects very weak alignment. With ${matchedCount} matched skill${matchedCount !== 1 ? 's' : ''} and ${missingCount} missing, the resume's content sits in a different conceptual region from the JD. This candidate likely targets a different role, domain, or seniority level.`;
+    }
 }
 
 // ─── Dashboard ──────────────────────────────────────────────────

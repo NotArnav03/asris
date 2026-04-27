@@ -9,9 +9,9 @@
         content="AI-powered resume screening system that matches candidates to job descriptions using multi-signal ranking.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@500;600&display=swap"
         rel="stylesheet">
-    <link rel="stylesheet" href="/frontend/styles.css">
+    <link rel="stylesheet" href="/frontend/styles.css?v=4">
 </head>
 
 <body>
@@ -45,13 +45,16 @@
         </div>
         <div class="nav-links">
             <a href="#rank" class="nav-link active" data-section="rank">
-                <span class="nav-icon">⚡</span> Rank
+                <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                <span>Rank</span>
             </a>
             <a href="#explain" class="nav-link" data-section="explain">
-                <span class="nav-icon">🔍</span> Explain
+                <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                <span>Explain</span>
             </a>
             <a href="#dashboard" class="nav-link" data-section="dashboard">
-                <span class="nav-icon">📊</span> Dashboard
+                <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><rect x="7" y="11" width="3" height="7" rx="0.5"/><rect x="12" y="7" width="3" height="11" rx="0.5"/><rect x="17" y="14" width="3" height="4" rx="0.5"/></svg>
+                <span>Dashboard</span>
             </a>
         </div>
         <div class="nav-status" id="serverStatus">
@@ -67,18 +70,17 @@
         <section class="section active" id="section-rank">
             <div class="section-header">
                 <h1 class="section-title">
-                    <span class="title-accent">Rank</span> Candidates
+                    <span class="title-accent">Rank</span> candidates
                 </h1>
-                <p class="section-subtitle">Paste a job description and upload PDF resumes (or paste text) to get
-                    AI-powered candidate rankings.</p>
+                <p class="section-subtitle">Paste a job description, drop in a stack of resumes, and get a ranked shortlist with multi-signal scores.</p>
             </div>
 
             <div class="rank-grid">
                 <!-- JD Input -->
                 <div class="glass-card card-jd">
                     <div class="card-header">
-                        <div class="card-icon">📄</div>
-                        <h2 class="card-title">Job Description</h2>
+                        <div class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/></svg></div>
+                        <h2 class="card-title">Job description</h2>
                     </div>
                     <textarea id="jdInput" class="text-input"
                         placeholder="Paste the job description here...&#10;&#10;Example: Looking for a Senior Python Developer with experience in machine learning, TensorFlow, and cloud deployment. Must have strong SQL skills and 3+ years of experience."
@@ -88,10 +90,10 @@
                 <!-- Resume Input -->
                 <div class="glass-card card-resumes">
                     <div class="card-header">
-                        <div class="card-icon">👤</div>
+                        <div class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
                         <h2 class="card-title">Resumes</h2>
-                        <button class="btn-icon" id="addResumeBtn" title="Add text resume">
-                            <span>+</span>
+                        <button class="btn-icon" id="addResumeBtn" title="Add text resume" aria-label="Add text resume">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
                         </button>
                     </div>
 
@@ -99,13 +101,13 @@
                     <div class="drop-zone" id="rankDropZone">
                         <input type="file" id="rankFileInput" accept=".pdf" multiple hidden>
                         <div class="drop-zone-content">
-                            <div class="drop-zone-icon">📎</div>
-                            <div class="drop-zone-title">Drag & drop PDF resumes here</div>
+                            <div class="drop-zone-icon"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 8 5-5 5 5"/><path d="M5 17v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2"/></svg></div>
+                            <div class="drop-zone-title">Drop PDF resumes here</div>
                             <div class="drop-zone-subtitle">or <span class="drop-zone-link" id="rankBrowseBtn">browse
                                     files</span></div>
                         </div>
                         <div class="drop-zone-active-overlay">
-                            <span>Drop PDFs here</span>
+                            <span>Release to upload</span>
                         </div>
                     </div>
 
@@ -139,8 +141,8 @@
                     </div>
                 </div>
                 <button class="btn-primary" id="rankBtn">
-                    <span class="btn-icon-inner">⚡</span>
-                    <span>Rank Candidates</span>
+                    <span class="btn-icon-inner" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg></span>
+                    <span>Rank candidates</span>
                     <span class="btn-loader" id="rankLoader"></span>
                 </button>
             </div>
@@ -148,7 +150,7 @@
             <!-- Results -->
             <div class="results-container" id="rankResults" style="display: none;">
                 <div class="results-header">
-                    <h2 class="results-title">🏆 Ranking Results</h2>
+                    <h2 class="results-title"><span class="results-title-accent">Shortlist</span></h2>
                     <span class="results-count" id="resultsCount"></span>
                 </div>
                 <div class="results-list" id="resultsList"></div>
@@ -159,34 +161,33 @@
         <section class="section" id="section-explain">
             <div class="section-header">
                 <h1 class="section-title">
-                    <span class="title-accent">Explain</span> Match
+                    <span class="title-accent">Explain</span> a match
                 </h1>
-                <p class="section-subtitle">Understand why a resume matches or doesn't match a job description — with
-                    skill breakdowns and keyword analysis.</p>
+                <p class="section-subtitle">Pick a single candidate and see why they matched — score breakdown, skill alignment, keyword overlap.</p>
             </div>
 
             <div class="explain-grid">
                 <div class="glass-card">
                     <div class="card-header">
-                        <div class="card-icon">📄</div>
-                        <h2 class="card-title">Job Description</h2>
+                        <div class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/></svg></div>
+                        <h2 class="card-title">Job description</h2>
                     </div>
                     <textarea id="explainJdInput" class="text-input" placeholder="Paste the job description..."
                         rows="8"></textarea>
                 </div>
                 <div class="glass-card">
                     <div class="card-header">
-                        <div class="card-icon">👤</div>
+                        <div class="card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
                         <h2 class="card-title">Resume</h2>
                     </div>
                     <div class="drop-zone drop-zone-sm" id="explainDropZone">
                         <input type="file" id="explainFileInput" accept=".pdf" hidden>
                         <div class="drop-zone-content">
-                            <div class="drop-zone-icon">📎</div>
+                            <div class="drop-zone-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 8 5-5 5 5"/><path d="M5 17v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2"/></svg></div>
                             <div class="drop-zone-title">Drop PDF or <span class="drop-zone-link"
                                     id="explainBrowseBtn">browse</span></div>
                         </div>
-                        <div class="drop-zone-active-overlay"><span>Drop PDF here</span></div>
+                        <div class="drop-zone-active-overlay"><span>Release to upload</span></div>
                     </div>
                     <div class="uploaded-file-badge" id="explainFileBadge" style="display:none;"></div>
                     <textarea id="explainResumeInput" class="text-input" placeholder="Or paste the resume text..."
@@ -196,8 +197,8 @@
 
             <div class="controls-bar">
                 <button class="btn-primary" id="explainBtn">
-                    <span class="btn-icon-inner">🔍</span>
-                    <span>Analyze Match</span>
+                    <span class="btn-icon-inner" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></span>
+                    <span>Analyze match</span>
                     <span class="btn-loader" id="explainLoader"></span>
                 </button>
             </div>
@@ -228,6 +229,12 @@
                         <div id="keywordAnalysis"></div>
                     </div>
                 </div>
+
+                <!-- Why this Semantic Similarity? -->
+                <div class="glass-card reasoning-card">
+                    <h3 class="metric-title">Why this semantic similarity?</h3>
+                    <div id="semanticReasoning"></div>
+                </div>
             </div>
         </section>
 
@@ -235,41 +242,41 @@
         <section class="section" id="section-dashboard">
             <div class="section-header">
                 <h1 class="section-title">
-                    <span class="title-accent">System</span> Dashboard
+                    <span class="title-accent">System</span> dashboard
                 </h1>
-                <p class="section-subtitle">Overview of processed data, cache statistics, and system health.</p>
+                <p class="section-subtitle">Processed data, cache statistics, and system health at a glance.</p>
             </div>
 
             <div class="dashboard-grid" id="dashboardGrid">
                 <!-- Stats cards populated by JS -->
                 <div class="glass-card stat-card">
-                    <div class="stat-icon">📑</div>
+                    <div class="stat-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg></div>
                     <div class="stat-value" id="statResumes">—</div>
-                    <div class="stat-label">Processed Resumes</div>
+                    <div class="stat-label">Processed resumes</div>
                     <div class="stat-bar">
                         <div class="stat-bar-fill" style="width: 0%"></div>
                     </div>
                 </div>
                 <div class="glass-card stat-card">
-                    <div class="stat-icon">💼</div>
+                    <div class="stat-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg></div>
                     <div class="stat-value" id="statJds">—</div>
-                    <div class="stat-label">Job Descriptions</div>
+                    <div class="stat-label">Job descriptions</div>
                     <div class="stat-bar">
                         <div class="stat-bar-fill" style="width: 0%"></div>
                     </div>
                 </div>
                 <div class="glass-card stat-card">
-                    <div class="stat-icon">🔗</div>
+                    <div class="stat-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/></svg></div>
                     <div class="stat-value" id="statPairs">—</div>
-                    <div class="stat-label">Training Pairs</div>
+                    <div class="stat-label">Training pairs</div>
                     <div class="stat-bar">
                         <div class="stat-bar-fill" style="width: 0%"></div>
                     </div>
                 </div>
                 <div class="glass-card stat-card">
-                    <div class="stat-icon">💾</div>
+                    <div class="stat-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.66 3.58 3 8 3s8-1.34 8-3V6"/><path d="M4 12v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg></div>
                     <div class="stat-value" id="statCache">—</div>
-                    <div class="stat-label">Cache Size</div>
+                    <div class="stat-label">Cache size</div>
                     <div class="stat-bar">
                         <div class="stat-bar-fill" style="width: 0%"></div>
                     </div>
@@ -278,7 +285,7 @@
 
             <!-- Pair Datasets Breakdown -->
             <div class="glass-card" id="pairBreakdownCard" style="margin-top: 1.5rem;">
-                <h3 class="metric-title">Pair Dataset Breakdown</h3>
+                <h3 class="metric-title">Pair dataset breakdown</h3>
                 <div id="pairBreakdown"></div>
             </div>
         </section>
@@ -287,7 +294,7 @@
     <!-- Toast Container -->
     <div class="toast-container" id="toastContainer"></div>
 
-    <script src="/frontend/app.js"></script>
+    <script src="/frontend/app.js?v=4"></script>
 </body>
 
 </html>

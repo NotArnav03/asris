@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -65,6 +66,11 @@ def get_explainer():
         from explainability.explainer import MatchExplainer
         _explainer = MatchExplainer()
     return _explainer
+
+
+@app.on_event("startup")
+async def startup_event():
+    get_embedding_manager()
 
 
 # ─── Request/Response Models ────────────────────────────────────
@@ -187,14 +193,15 @@ async def rank_pdf_resumes(
 
     manager = get_embedding_manager()
     jd_emb = manager.sbert_model.encode(jd_text, convert_to_numpy=True)
-    resume_embs = manager.encode_sbert(resume_texts, use_cache=False)
+    resume_embs = manager.encode_sbert(resume_texts, use_cache=True)
 
-    scored = []
-    for filename, emb in resume_embs.items():
-        score = float(manager.cosine_similarity(jd_emb, emb))
-        scored.append((filename, score))
+    filenames = list(resume_embs.keys())
+    resume_matrix = np.vstack(list(resume_embs.values()))
+    jd_vec = jd_emb.reshape(1, -1)
+    norms = np.linalg.norm(resume_matrix, axis=1, keepdims=True) * np.linalg.norm(jd_vec)
+    sims = (resume_matrix @ jd_vec.T).flatten() / np.maximum(norms.flatten(), 1e-10)
 
-    scored.sort(key=lambda x: x[1], reverse=True)
+    scored = sorted(zip(filenames, sims.tolist()), key=lambda x: x[1], reverse=True)
 
     results = [
         {"filename": f, "score": round(s, 4), "rank": i + 1}
@@ -215,24 +222,20 @@ async def rank_resumes(request: RankRequest):
 
     manager = get_embedding_manager()
 
-    # Encode JD
     jd_emb = manager.sbert_model.encode(request.jd_text, convert_to_numpy=True)
+    resume_embs = manager.encode_sbert(request.resume_texts, use_cache=True)
 
-    # Encode resumes
-    resume_embs = manager.encode_sbert(request.resume_texts, use_cache=False)
+    filenames = list(resume_embs.keys())
+    resume_matrix = np.vstack(list(resume_embs.values()))
+    jd_vec = jd_emb.reshape(1, -1)
+    norms = np.linalg.norm(resume_matrix, axis=1, keepdims=True) * np.linalg.norm(jd_vec)
+    sims = (resume_matrix @ jd_vec.T).flatten() / np.maximum(norms.flatten(), 1e-10)
 
-    # Score and rank
-    scored = []
-    for filename, emb in resume_embs.items():
-        score = float(manager.cosine_similarity(jd_emb, emb))
-        scored.append((filename, score))
-
-    scored.sort(key=lambda x: x[1], reverse=True)
-    top_k = scored[:request.top_k]
+    scored = sorted(zip(filenames, sims.tolist()), key=lambda x: x[1], reverse=True)
 
     results = [
         RankResult(filename=f, score=round(s, 4), rank=i + 1)
-        for i, (f, s) in enumerate(top_k)
+        for i, (f, s) in enumerate(scored[:request.top_k])
     ]
 
     return RankResponse(
