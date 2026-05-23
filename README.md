@@ -1,11 +1,11 @@
-# ASRIS — AI-Powered Resume Screening & Intelligent Shortlisting
+# FAIMR — Fairness-Aware Interpretable Multi-Signal Ranking
 
 An end-to-end AI system that matches job descriptions (JDs) to resumes using multi-signal ranking — combining semantic embeddings, skill-based matching, and learned relevance models to produce explainable, fair candidate shortlists.
 
 ## Architecture
 
 ```
-asris/
+faimr/
 ├── config.py                    # Centralized configuration
 ├── run_pipeline.py              # Pipeline orchestration CLI
 ├── requirements.txt             # Python dependencies

@@ -1,6 +1,6 @@
 """
-ASRIS — Pipeline Orchestration
-CLI tool to run the full ASRIS pipeline or individual stages.
+FAIMR — Pipeline Orchestration
+CLI tool to run the full FAIMR pipeline or individual stages.
 
 Usage:
     python run_pipeline.py --all              # Run everything
@@ -110,7 +110,7 @@ def run_stage(stage_name: str):
 def run_all():
     """Run all pipeline stages in order."""
     total_start = time.time()
-    logger.info("Starting full ASRIS pipeline...")
+    logger.info("Starting full FAIMR pipeline...")
 
     for stage_name in ["ingestion", "pairs", "preprocessing", "evaluate"]:
         run_stage(stage_name)
@@ -124,7 +124,7 @@ def run_all():
 def list_stages():
     """Print available pipeline stages."""
     print(f"\n{'═' * 55}")
-    print(f"  ASRIS Pipeline Stages")
+    print(f"  FAIMR Pipeline Stages")
     print(f"{'═' * 55}")
 
     for name, stage in STAGES.items():
@@ -138,7 +138,7 @@ def list_stages():
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="ASRIS Pipeline Orchestrator",
+        description="FAIMR Pipeline Orchestrator",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

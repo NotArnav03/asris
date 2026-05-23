@@ -1,5 +1,5 @@
 """
-ASRIS — Explainability Module
+FAIMR — Explainability Module
 Generates human-readable explanations for resume-JD match decisions:
 skill match breakdown, section-level scoring, and keyword heatmaps.
 """

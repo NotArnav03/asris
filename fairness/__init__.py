@@ -1,1 +1,1 @@
-"""ASRIS Fairness Package"""
+"""FAIMR Fairness Package"""

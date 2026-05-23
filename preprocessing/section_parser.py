@@ -1,5 +1,5 @@
 """
-ASRIS — Resume Section Parser
+FAIMR — Resume Section Parser
 Extracts structured sections from raw resume text (education, experience,
 skills, projects, certifications, etc.)
 """

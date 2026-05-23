@@ -1,5 +1,5 @@
 """
-ASRIS — Learning-to-Rank Model
+FAIMR — Learning-to-Rank Model
 Trains an XGBoost/LightGBM ranker on multi-signal features:
 SBERT similarity, TF-IDF similarity, skill coverage, section scores,
 keyword overlap — learns optimal weights automatically.

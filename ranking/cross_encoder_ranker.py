@@ -1,5 +1,5 @@
 """
-ASRIS — Cross-Encoder Re-Ranker
+FAIMR — Cross-Encoder Re-Ranker
 Uses a cross-encoder model to re-rank top-K candidates from the
 bi-encoder for higher precision on the final shortlist.
 """

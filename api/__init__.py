@@ -1,1 +1,1 @@
-"""ASRIS API Package"""
+"""FAIMR API Package"""

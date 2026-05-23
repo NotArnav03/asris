@@ -1,5 +1,5 @@
 """
-ASRIS — Centralized Configuration
+FAIMR — Centralized Configuration
 All paths, model parameters, and hyperparameters in one place.
 """
 

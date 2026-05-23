@@ -1,1 +1,1 @@
-"""ASRIS Evaluation Package"""
+"""FAIMR Evaluation Package"""

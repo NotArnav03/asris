@@ -1,5 +1,5 @@
 """
-ASRIS — REST API Server
+FAIMR — REST API Server
 FastAPI-based API for resume-JD matching, ranking, and explanations.
 
 Usage:
@@ -30,7 +30,7 @@ logger = get_logger("api.server")
 # ─── FastAPI App ─────────────────────────────────────────────────
 
 app = FastAPI(
-    title="ASRIS — AI Resume Screening API",
+    title="FAIMR — Fairness-Aware Interpretable Multi-Signal Ranking API",
     description="Match resumes to job descriptions using multi-signal AI ranking.",
     version="1.0.0",
 )
@@ -107,7 +107,7 @@ async def serve_frontend():
     index_path = FRONTEND_DIR / "index.html"
     if index_path.exists():
         return HTMLResponse(content=index_path.read_text(encoding="utf-8"))
-    return HTMLResponse(content="<h1>ASRIS API is running. Frontend not found.</h1>")
+    return HTMLResponse(content="<h1>FAIMR API is running. Frontend not found.</h1>")
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -397,7 +397,7 @@ async def counterfactual_explain(request: ExplainRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    logger.info(f"Starting ASRIS API on {API_HOST}:{API_PORT}")
+    logger.info(f"Starting FAIMR API on {API_HOST}:{API_PORT}")
     uvicorn.run(
         "api.server:app",
         host=API_HOST,

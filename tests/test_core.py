@@ -1,5 +1,5 @@
 """
-ASRIS — Unit Tests
+FAIMR — Unit Tests
 Tests for preprocessing, evaluation, and fairness modules.
 """
 

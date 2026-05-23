@@ -1,5 +1,5 @@
 """
-ASRIS — Experiment Runner
+FAIMR — Experiment Runner
 MLflow-based experiment tracking with automatic logging of
 parameters, metrics, artifacts, and model comparison.
 """
@@ -26,7 +26,7 @@ class ExperimentTracker:
 
     def __init__(
         self,
-        experiment_name: str = "asris_ranking",
+        experiment_name: str = "faimr_ranking",
         output_dir: Optional[Path] = None,
         use_mlflow: bool = False,
     ):

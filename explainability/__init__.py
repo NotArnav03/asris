@@ -1,1 +1,1 @@
-"""ASRIS Explainability Package"""
+"""FAIMR Explainability Package"""

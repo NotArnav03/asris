@@ -12,12 +12,12 @@ os.chdir("/content")
 ```
 
 ```bash
-!git clone https://github.com/NotArnav03/asris.git
+!git clone https://github.com/NotArnav03/faimr.git
 ```
 
 ```python
-os.chdir("/content/asris")
-print("CWD:", os.getcwd())   # must print /content/asris
+os.chdir("/content/faimr")
+print("CWD:", os.getcwd())   # must print /content/faimr
 ```
 
 ```bash
@@ -47,7 +47,7 @@ drive.mount("/content/drive")
 
 ## Cell 4 — Link your data  ⚠️ Read this carefully
 
-The scripts expect this layout under `/content/asris/data/`:
+The scripts expect this layout under `/content/faimr/data/`:
 
 ```
 data/
@@ -70,9 +70,9 @@ data/
 import os
 
 # Change this to wherever your data folder is on Drive
-DRIVE_DATA = "/content/drive/MyDrive/asris_data/data"
+DRIVE_DATA = "/content/drive/MyDrive/faimr_data/data"
 
-repo_data = "/content/asris/data"
+repo_data = "/content/faimr/data"
 
 if os.path.islink(repo_data):
     os.unlink(repo_data)          # remove stale symlink if any
@@ -92,7 +92,7 @@ uploaded = files.upload()   # pick your data.zip in the dialog
 ```
 
 ```bash
-!unzip -q data.zip -d /content/asris/
+!unzip -q data.zip -d /content/faimr/
 ```
 
 ---
@@ -196,7 +196,7 @@ Replace `\label{tab:fcr_stress}` and add `\label{tab:fcr_stress_folds}` in the p
 ```python
 import shutil, os
 
-out = "/content/drive/MyDrive/asris_results"
+out = "/content/drive/MyDrive/faimr_results"
 os.makedirs(out, exist_ok=True)
 
 for log in ["/tmp/cf_reeval.log", "/tmp/label_quality.log", "/tmp/fcr_stress.log"]:

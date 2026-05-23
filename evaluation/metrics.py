@@ -1,5 +1,5 @@
 """
-ASRIS — Evaluation Metrics
+FAIMR — Evaluation Metrics
 Comprehensive ranking evaluation: P@K, R@K, NDCG, MRR, MAP, ROC-AUC,
 with per-query and aggregate reporting.
 """

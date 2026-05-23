@@ -1,5 +1,5 @@
 """
-ASRIS — Embedding Manager
+FAIMR — Embedding Manager
 Centralized embedding generation with disk caching for SBERT and TF-IDF.
 Avoids re-encoding on every run.
 """

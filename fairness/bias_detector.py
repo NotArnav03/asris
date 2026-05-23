@@ -1,5 +1,5 @@
 """
-ASRIS/FAIMR -- Fairness & Bias Detection Module
+FAIMR — Fairness & Bias Detection Module
 Detects potential bias in resume ranking across demographic groups.
 Implements the 4/5 Rule (Adverse Impact Ratio), demographic parity,
 and statistical significance testing.

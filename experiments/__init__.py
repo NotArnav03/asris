@@ -1,1 +1,1 @@
-"""ASRIS Experiments Package"""
+"""FAIMR Experiments Package"""

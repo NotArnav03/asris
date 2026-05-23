@@ -1,5 +1,5 @@
 """
-ASRIS — Text Normalizer
+FAIMR — Text Normalizer
 Comprehensive text cleaning, normalization, and lemmatization pipeline.
 """
 

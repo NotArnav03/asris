@@ -1,1 +1,1 @@
-"""ASRIS Preprocessing Package"""
+"""FAIMR Preprocessing Package"""

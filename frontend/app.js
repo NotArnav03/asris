@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════
-   ASRIS — Frontend Application
+   FAIMR — Frontend Application
    Backend integration · Dynamic interactions · Particle system
    ═══════════════════════════════════════════════════════════════ */
 

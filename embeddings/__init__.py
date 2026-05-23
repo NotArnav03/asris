@@ -1,1 +1,1 @@
-"""ASRIS Embeddings Package"""
+"""FAIMR Embeddings Package"""

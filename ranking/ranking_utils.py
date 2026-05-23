@@ -1,5 +1,5 @@
 """
-ASRIS — Ranking Utilities
+FAIMR — Ranking Utilities
 Shared base utilities for all ranking evaluators to eliminate code duplication.
 """
 

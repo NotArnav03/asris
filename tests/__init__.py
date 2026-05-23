@@ -1,1 +1,1 @@
-"""ASRIS Tests Package"""
+"""FAIMR Tests Package"""
