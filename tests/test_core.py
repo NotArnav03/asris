@@ -377,6 +377,63 @@ class TestBiasDetector:
         )
         assert result["signals"]["female_title"] is True
 
+    # --- Classifier integration (Issue #3 / Task #14) -----------------
+
+    def test_classifier_drives_name_signal_for_known_name(self):
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "Priya Sharma\nML Engineer"
+        )
+        # The signal must come from the calibrated classifier.
+        assert r["signals"]["name_source"] in ("lookup", "model")
+        assert r["signals"]["name_token"] == "priya"
+        assert r["signals"]["name_p_female"] >= 0.85
+        assert r["signals"]["female_name"] is True
+        assert r["gender"] == "female"
+
+    def test_resume_vocab_does_not_drive_name_signal(self):
+        # No real name in the header — only resume vocabulary.  The
+        # name scan must report name_source == "empty" and not vote
+        # for either gender.  Previously the OOV branch of the model
+        # would classify these tokens with high confidence and produce
+        # spurious gender votes.
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "Senior Software Engineer\nData Scientist Resume"
+        )
+        assert r["signals"]["name_source"] == "empty"
+        assert r["signals"]["male_name"] is False
+        assert r["signals"]["female_name"] is False
+
+    def test_first_token_rule_picks_given_name_over_surname(self):
+        # "Mary Jones" — Jones is a confident OOV male lookup; under
+        # the previous max-confidence rule Jones beat Mary and the
+        # candidate was misclassified.  First-token rule fixes this.
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "Mary Jones - Data Scientist"
+        )
+        assert r["signals"]["name_token"] == "mary"
+        assert r["gender"] == "female"
+
+    def test_lowercase_token_is_not_a_name_candidate(self):
+        # Resumes don't write names in all-lowercase.  The first
+        # uppercase-leading token must be picked, skipping any
+        # lowercase preceding tokens.
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "summary objective Priya Sharma"
+        )
+        assert r["signals"]["name_token"] == "priya"
+
+    def test_name_p_female_is_surfaced_in_signals(self):
+        # The probability must always be present (default 0.5) so
+        # downstream code can rely on it without a key-existence check.
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored("")
+        assert r["signals"]["name_p_female"] == 0.5
+        assert r["signals"]["name_source"] == "empty"
+
     def test_audit_runs(self):
         from fairness.bias_detector import BiasDetector
         detector = BiasDetector()

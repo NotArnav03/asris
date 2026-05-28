@@ -278,6 +278,46 @@ _UNISEX_NAMES: set = {
 }
 
 
+# --- Resume-vocabulary denylist for the name scan -------------------------
+# When sweeping header tokens through the name classifier, we exclude
+# common resume-domain words.  Without this filter the OOV branch of
+# the classifier produces confident-but-meaningless predictions on
+# words like "Engineering", "Team", "Resume", "Senior" — short tokens
+# whose char n-grams happen to overlap with one gender's name patterns.
+#
+# This list is intentionally conservative: it covers section headers,
+# job-title nouns, and obvious non-name address words.  Anything not
+# on the list still goes through the classifier, which is fine for
+# real names (lookup will hit) and tolerable for surnames (the
+# first-token rule below skips most of them).
+_RESUME_VOCAB_DENYLIST: frozenset = frozenset({
+    # Section / structural headers
+    "resume", "cv", "vitae", "summary", "objective", "profile",
+    "professional", "personal", "contact", "address", "phone", "email",
+    "linkedin", "github", "website", "location", "education",
+    "experience", "skills", "projects", "certifications", "awards",
+    "publications", "references", "languages", "interests",
+    # Job-title nouns
+    "engineer", "engineering", "developer", "scientist", "analyst",
+    "manager", "director", "consultant", "specialist", "architect",
+    "designer", "researcher", "lead", "senior", "junior", "principal",
+    "associate", "assistant", "officer", "executive", "head", "chief",
+    "data", "team", "software", "systems", "product", "project",
+    "technical", "technology", "business", "marketing", "sales",
+    # Bare honorifics that escape the honorific scan when they appear
+    # alone without a following name (e.g. a resume that says "Mr" in
+    # the header).
+    "mr", "mrs", "ms", "miss", "dr", "sir", "madam", "prof", "mister",
+})
+
+# Minimum classifier confidence (=|p - 0.5| * 2) required for a token
+# to drive the legacy male_name / female_name boolean signals.  Below
+# this floor we still record name_p_female and set unisex_name=True,
+# but we DO NOT vote for either gender — the classifier is too
+# uncertain about this token to bias the categorical decision.
+_NAME_SIGNAL_CONFIDENCE_FLOOR: float = 0.40
+
+
 # --- Vocab consistency assertion ------------------------------------------
 # Fail fast at import time if the name vocabulary develops cross-list
 # contamination.  These invariants are LOAD-BEARING for the fairness audit:
@@ -361,13 +401,23 @@ class BiasDetector:
             "male_title": False,
             "female_title": False,
             "neutral_title": False,
-            "male_name": False,
+            # Legacy boolean signals — derived from name_p_female via
+            # the DEFAULT_HARD_THRESHOLD of the name classifier.  Kept
+            # for downstream code that expects the old shape.
+            "male_name":   False,
             "female_name": False,
-            # True when a recognised unisex first-name token (see
-            # _UNISEX_NAMES) is present in the header.  Does NOT vote
-            # for either gender — surfaced so callers can distinguish
-            # "name detected, gender ambiguous" from "no name detected".
             "unisex_name": False,
+            # New probabilistic name signal — calibrated P(female) from
+            # the highest-confidence header token, per the trained
+            # char-ngram + isotonic-calibration classifier in
+            # fairness/names/classifier.py.  0.5 = no name signal.
+            "name_p_female": 0.5,
+            # Provenance of the name signal: "lookup" (corpus row hit),
+            # "model" (OOV, used classifier fallback), or "empty" (no
+            # usable token found in the header).
+            "name_source": "empty",
+            # The header token that produced name_p_female, lower-cased.
+            "name_token": "",
         }
 
         # 1. Pronoun scan (full text, lowercased)
@@ -382,24 +432,67 @@ class BiasDetector:
         signals["female_title"]  = _honorific_fires(_HONORIFIC_PATTERNS["female"],  header_orig)
         signals["neutral_title"] = _honorific_fires(_HONORIFIC_PATTERNS["neutral"], header_orig)
 
-        # 3. Name scan: check first two header lines, each word.
-        # Unisex tokens (_UNISEX_NAMES) are surfaced as a separate signal
-        # but contribute zero score weight — they are NOT evidence of
-        # either gender.  This prevents tokens like "Hyun" or "Lee"
-        # from leaking into either bucket (the prior implementation
-        # listed them under both, which silently cancelled to "unknown"
-        # and quietly excluded those candidates from the AIR denominator).
+        # 3. Name scan: classify the FIRST plausible name token in the
+        # first two header lines through the calibrated name classifier.
+        #
+        # Design rationale (see _RESUME_VOCAB_DENYLIST and
+        # _NAME_SIGNAL_CONFIDENCE_FLOOR for the supporting constants):
+        #
+        #   - "First plausible token" rather than "max-confidence token"
+        #     because resumes overwhelmingly place the candidate's given
+        #     name first.  Picking max-confidence instead made surnames
+        #     dominate — "Mary Jones" classified male because Jones is
+        #     a confident OOV male prediction, "Sarah Chen" classified
+        #     by Chen, etc.  The first-token rule is the standard
+        #     resume convention and recovers the expected behaviour.
+        #
+        #   - "Plausible" means: starts with an uppercase letter in the
+        #     original text (resumes Title-case names), length >= 2 after
+        #     stripping non-letters, and not in the resume-vocab denylist
+        #     (Engineer, Resume, Team, Senior, ...).  Without these
+        #     filters the OOV branch of the classifier produces
+        #     confident-but-meaningless predictions on common resume
+        #     vocabulary whose char n-grams happen to overlap with
+        #     one gender's name patterns.
+        #
+        #   - Below _NAME_SIGNAL_CONFIDENCE_FLOOR the classifier is
+        #     too uncertain to vote for either gender; the candidate is
+        #     marked unisex_name=True but neither male_name nor
+        #     female_name fires.
+        from fairness.names.classifier import predict
+
         header_lines = text.strip().split("\n")[:2]
-        header_tokens = " ".join(header_lines).lower().split()
-        for token in header_tokens:
-            clean = re.sub(r"[^a-z]", "", token)
-            if not clean:
+        first_plausible: str = ""
+        for raw in " ".join(header_lines).split():
+            cleaned = re.sub(r"[^A-Za-z]", "", raw)
+            if len(cleaned) < 2:
                 continue
-            if clean in GENDERED_NAMES["male"]:
-                signals["male_name"] = True
-            if clean in GENDERED_NAMES["female"]:
-                signals["female_name"] = True
-            if clean in _UNISEX_NAMES:
+            if not cleaned[0].isupper():
+                continue  # resumes write names Title-cased or all-caps
+            if cleaned.lower() in _RESUME_VOCAB_DENYLIST:
+                continue
+            first_plausible = cleaned
+            break
+
+        if first_plausible:
+            result = predict(first_plausible)
+            if result.source != "empty":
+                signals["name_p_female"] = round(float(result.p_female), 4)
+                signals["name_source"]   = result.source
+                signals["name_token"]    = result.name
+
+        # Derived legacy booleans.  Lookup hits with high distance from
+        # 0.5, OR model hits that clear the confidence floor, vote for
+        # the corresponding gender.  Everything in between is unisex.
+        if signals["name_source"] != "empty":
+            p_f = signals["name_p_female"]
+            confidence = abs(p_f - 0.5) * 2.0
+            if confidence >= _NAME_SIGNAL_CONFIDENCE_FLOOR:
+                if p_f > 0.5:
+                    signals["female_name"] = True
+                else:
+                    signals["male_name"] = True
+            else:
                 signals["unisex_name"] = True
 
         # 4. Score aggregation
