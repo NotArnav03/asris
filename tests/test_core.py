@@ -225,6 +225,96 @@ class TestBiasDetector:
         assert result["passes_4_5_rule"] is False
         assert result["risk_level"] in ["MODERATE", "HIGH", "CRITICAL"]
 
+    # --- Honorific hardening (Issue #1) -------------------------------
+    # These tests lock down the strict honorific detection that replaced
+    # the old `\bms\.?\b` regex.  They MUST stay green: each one
+    # represents a previously-exploitable false positive that allowed an
+    # applicant to flip their detected gender by editing one line of
+    # their resume.
+
+    def test_ms_office_does_not_fire_female_title(self):
+        from fairness.bias_detector import BiasDetector
+        result = BiasDetector.detect_gender_proxy_scored(
+            "John Smith\nSummary: MS Office, Excel, PowerPoint"
+        )
+        assert result["signals"]["female_title"] is False
+
+    def test_ms_in_cs_does_not_fire_female_title(self):
+        from fairness.bias_detector import BiasDetector
+        result = BiasDetector.detect_gender_proxy_scored(
+            "Robert Jones\nMS in Computer Science, Stanford"
+        )
+        assert result["signals"]["female_title"] is False
+
+    def test_ms_powerpoint_does_not_fire_female_title(self):
+        from fairness.bias_detector import BiasDetector
+        result = BiasDetector.detect_gender_proxy_scored(
+            "Daniel Wright\nProficient in MS PowerPoint and MS Project"
+        )
+        assert result["signals"]["female_title"] is False
+
+    def test_mr_aware_acronym_does_not_fire_male_title(self):
+        from fairness.bias_detector import BiasDetector
+        result = BiasDetector.detect_gender_proxy_scored(
+            "Aisha Patel\nDesigned MR-aware caching for ARKit pipelines"
+        )
+        assert result["signals"]["male_title"] is False
+
+    def test_dr_drive_does_not_fire_neutral_title(self):
+        from fairness.bias_detector import BiasDetector
+        result = BiasDetector.detect_gender_proxy_scored(
+            "Casey Lin\n123 Dr Drive, Mountain View, CA"
+        )
+        assert result["signals"]["neutral_title"] is False
+
+    def test_mr_smith_fires_male_title(self):
+        from fairness.bias_detector import BiasDetector
+        result = BiasDetector.detect_gender_proxy_scored(
+            "Mr. Smith\nSenior Backend Engineer with 8 years experience"
+        )
+        assert result["signals"]["male_title"] is True
+        assert result["gender"] == "male"
+        assert result["confidence"] == 0.95
+
+    def test_ms_priya_fires_female_title(self):
+        from fairness.bias_detector import BiasDetector
+        result = BiasDetector.detect_gender_proxy_scored(
+            "Ms. Priya Sharma\nML Engineer, TensorFlow specialist"
+        )
+        assert result["signals"]["female_title"] is True
+        assert result["gender"] == "female"
+
+    def test_dr_chen_fires_neutral_title(self):
+        from fairness.bias_detector import BiasDetector
+        result = BiasDetector.detect_gender_proxy_scored(
+            "Dr. Wei Chen\nResearcher with NLP publications"
+        )
+        assert result["signals"]["neutral_title"] is True
+
+    def test_all_caps_honorific_with_name_fires(self):
+        # Resumes sometimes use all-caps name lines.  The honorific is
+        # case-insensitive but the follow-on must still be a capitalised
+        # name token (which all-caps satisfies).
+        from fairness.bias_detector import BiasDetector
+        result = BiasDetector.detect_gender_proxy_scored(
+            "MR. JOHN DOE\nSoftware Engineer"
+        )
+        assert result["signals"]["male_title"] is True
+
+    def test_mrs_smith_jones_hyphenated_name_fires(self):
+        from fairness.bias_detector import BiasDetector
+        result = BiasDetector.detect_gender_proxy_scored(
+            "Mrs. Smith-Jones\nProgram Director"
+        )
+        assert result["signals"]["female_title"] is True
+
+    def test_ms_oneill_apostrophe_name_fires(self):
+        from fairness.bias_detector import BiasDetector
+        result = BiasDetector.detect_gender_proxy_scored(
+            "Ms. O'Neill\nProduct Manager"
+        )
+        assert result["signals"]["female_title"] is True
+
     def test_audit_runs(self):
         from fairness.bias_detector import BiasDetector
         detector = BiasDetector()

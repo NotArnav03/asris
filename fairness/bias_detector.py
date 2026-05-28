@@ -47,19 +47,96 @@ GENDER_INDICATORS = {
     ],
 }
 
-# Title/honorific patterns -- applied to the first 200 characters of text
-TITLE_HONORIFICS = {
-    "male": [
-        r"\bmr\.?\b", r"\bmister\b", r"\bsir\b",
-    ],
-    "female": [
-        r"\bms\.?\b", r"\bmrs\.?\b", r"\bmiss\b", r"\bmadam\b",
-    ],
-    # Neutral titles do not vote for either gender
-    "neutral": [
-        r"\bdr\.?\b", r"\bprof\.?\b", r"\bprofessor\b", r"\bmx\.?\b",
-    ],
+# --- Honorifics ------------------------------------------------------------
+# Title detection is intentionally STRICT: an honorific only fires when it
+# is immediately followed by a plausible proper-name token.  The previous
+# implementation used `\bms\.?\b` against lowercased text, which fired on
+# "MS Office", "MS in CS", "MS Excel" — making the female title the most
+# common false positive in the dataset and a single-line attack vector
+# (any candidate could flip their detected gender by writing "MS Office"
+# in the header summary).
+#
+# The new pipeline uses two layers of defence:
+#
+#   1. Pattern: the honorific match is case-insensitive (scoped (?i:...))
+#      but the follow-on capture group is *case-sensitive* and must begin
+#      with a capital letter.  This blocks "MS in CS" because "in" is
+#      lowercase — the all-caps "MS" alone is no longer enough.
+#
+#   2. Denylist: the captured follow-on token is checked (case-insensitive)
+#      against a list of degree, product, and connector words.  This blocks
+#      the residual false positives where the follow-on happens to be
+#      Title-cased — "MS Office" matches the pattern but "Office" is on
+#      the denylist, so the honorific does not fire.
+#
+# The honorific scan operates on the ORIGINAL-CASE first 200 chars of the
+# resume.  Pronoun and name scans continue to use the lowercased text.
+
+_HONORIFIC_DENYLIST: frozenset = frozenset({
+    # Connectors that can appear after a degree abbreviation
+    "in", "of", "from", "the", "a", "an", "by", "for", "and", "or", "at",
+    "with", "as",
+    # Degree fields commonly written after "MS" / "MA" / "MSc"
+    "computer", "science", "engineering", "mathematics", "math", "maths",
+    "business", "administration", "arts", "education", "statistics",
+    "economics", "finance", "marketing", "psychology", "biology",
+    "chemistry", "physics", "data", "information", "technology",
+    "management", "operations", "systems", "analytics", "accounting",
+    "communications", "humanities", "law", "medicine", "nursing",
+    "degree", "thesis", "research", "studies", "program", "programme",
+    "candidate", "graduate", "honors", "honours", "minor", "major",
+    # Microsoft / common tech product names that collide with "MS"
+    "office", "word", "excel", "powerpoint", "outlook", "project",
+    "access", "teams", "visio", "sharepoint", "onenote", "dynamics",
+    "sql", "server", "windows", "azure", "visual", "studio", "code",
+    "exchange", "edge", "store", "bing", "copilot", "fabric", "graph",
+    # Doctor false positives — "Dr" preceding non-name terms
+    "drive", "driver", "driving",
+    # Other common falsely-Title-cased follow-ons
+    "level", "certified", "certification", "license", "diploma",
+})
+
+
+def _build_honorific_pattern(tokens: list) -> re.Pattern:
+    """Compile a strict honorific pattern.
+
+    The honorific itself is matched case-insensitively (scoped flag), but
+    the follow-on word MUST start with an uppercase letter and contain
+    only name-like characters (letters, apostrophes, hyphens).  This is
+    the primary defence against "MS in CS" / "MR-aware" style strings.
+    The denylist (`_HONORIFIC_DENYLIST`) is the secondary defence against
+    the residual case where the follow-on word is Title-cased but not a
+    name ("MS Office").
+    """
+    alts = "|".join(f"(?i:{re.escape(t)})" for t in tokens)
+    # Optional period, then whitespace, then a Title-cased name token.
+    # Apostrophes and hyphens are permitted to support "O'Neill", "Smith-Jones".
+    return re.compile(rf"\b(?:{alts})\.?\s+([A-Z][A-Za-z'\-]+)")
+
+
+_HONORIFIC_PATTERNS: dict = {
+    "male":    _build_honorific_pattern(["Mr", "Mister", "Sir"]),
+    "female":  _build_honorific_pattern(["Mrs", "Ms", "Miss", "Madam"]),
+    "neutral": _build_honorific_pattern(["Dr", "Prof", "Professor", "Mx"]),
 }
+
+
+def _honorific_fires(pattern: re.Pattern, header_orig: str) -> bool:
+    """Return True iff ``pattern`` matches inside ``header_orig`` with a
+    follow-on token that is not on the denylist.
+
+    ``header_orig`` MUST preserve the resume's original case — lowercasing
+    the input collapses "MS Office" (false positive) onto "Ms. Officer"
+    (true positive) and defeats the strict-case capture group.
+    """
+    for m in pattern.finditer(header_orig):
+        follow = m.group(1)
+        if not follow:
+            continue
+        clean = follow.rstrip(".,;:!?").lower()
+        if clean and clean not in _HONORIFIC_DENYLIST:
+            return True
+    return False
 
 # --- Name-based gender proxies (common gendered first names) ---------------
 # Organised by cultural cluster for transparency.
@@ -208,7 +285,7 @@ class BiasDetector:
             - Otherwise:                       0.00  ("unknown")
         """
         text_lower = text.lower()
-        header = text_lower[:200]  # title/name detection on header only
+        header_orig = text[:200]   # honorific scan needs ORIGINAL case
 
         signals: dict = {
             "male_pronoun": 0,
@@ -220,25 +297,17 @@ class BiasDetector:
             "female_name": False,
         }
 
-        # 1. Pronoun scan (full text)
+        # 1. Pronoun scan (full text, lowercased)
         for pat in GENDER_INDICATORS["male"]:
             signals["male_pronoun"] += len(re.findall(pat, text_lower))
         for pat in GENDER_INDICATORS["female"]:
             signals["female_pronoun"] += len(re.findall(pat, text_lower))
 
-        # 2. Title/honorific scan (header only, stronger evidence)
-        for pat in TITLE_HONORIFICS["male"]:
-            if re.search(pat, header):
-                signals["male_title"] = True
-                break
-        for pat in TITLE_HONORIFICS["female"]:
-            if re.search(pat, header):
-                signals["female_title"] = True
-                break
-        for pat in TITLE_HONORIFICS["neutral"]:
-            if re.search(pat, header):
-                signals["neutral_title"] = True
-                break
+        # 2. Honorific scan (original-case header only, strict pattern + denylist).
+        # See _HONORIFIC_PATTERNS for the false-positive defences.
+        signals["male_title"]    = _honorific_fires(_HONORIFIC_PATTERNS["male"],    header_orig)
+        signals["female_title"]  = _honorific_fires(_HONORIFIC_PATTERNS["female"],  header_orig)
+        signals["neutral_title"] = _honorific_fires(_HONORIFIC_PATTERNS["neutral"], header_orig)
 
         # 3. Name scan: check first two header lines, each word
         header_lines = text.strip().split("\n")[:2]
