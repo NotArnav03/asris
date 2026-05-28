@@ -635,6 +635,60 @@ class BiasDetector:
         else:
             return "CRITICAL"
 
+    # --- Soft (probability-weighted) AIR ----------------------------------
+
+    @staticmethod
+    def _air_soft(candidate_records: list) -> dict:
+        """Compute the probability-weighted Adverse Impact Ratio.
+
+        Each candidate with a known P(female | name) contributes that
+        probability to the female group's mass and (1 - p) to the male
+        group's mass.  Candidates whose name signal is "empty" (no
+        useful classifier output) are excluded — they contribute to
+        neither group total, which keeps the soft AIR comparable to
+        the hard AIR which also excludes "unknown" candidates.
+
+        Returns a dict with the male/female totals, selected masses,
+        per-group selection rates, and the resulting AIR_soft.  When
+        either group has zero total mass the AIR is reported as 1.0
+        (cannot detect adverse impact with one group).
+        """
+        male_total = female_total = 0.0
+        male_selected = female_selected = 0.0
+        for rec in candidate_records:
+            p_f = rec["p_female_soft"]
+            if p_f is None:
+                continue  # name_source == "empty" — exclude
+            p_m = 1.0 - p_f
+            male_total   += p_m
+            female_total += p_f
+            if rec["selected"]:
+                male_selected   += p_m
+                female_selected += p_f
+
+        def _rate(num: float, den: float) -> float:
+            return num / den if den > 0 else 0.0
+
+        male_rate   = _rate(male_selected,   male_total)
+        female_rate = _rate(female_selected, female_total)
+
+        if male_total == 0 or female_total == 0:
+            air_soft = 1.0
+        elif max(male_rate, female_rate) == 0:
+            air_soft = 0.0
+        else:
+            air_soft = min(male_rate, female_rate) / max(male_rate, female_rate)
+
+        return {
+            "male_total_mass":       round(male_total, 4),
+            "female_total_mass":     round(female_total, 4),
+            "male_selected_mass":    round(male_selected, 4),
+            "female_selected_mass":  round(female_selected, 4),
+            "male_rate":             round(male_rate, 4),
+            "female_rate":           round(female_rate, 4),
+            "adverse_impact_ratio":  round(air_soft, 4),
+        }
+
     # --- Full Bias Audit --------------------------------------------------
 
     def audit_ranking_bias(
@@ -655,16 +709,37 @@ class BiasDetector:
         if selection_threshold is None:
             selection_threshold = float(np.median(list(scores.values())))
 
+        # For each candidate we record BOTH the hard categorical
+        # ("male"/"female"/"unknown" via detect_gender_proxy_scored) AND
+        # the calibrated soft probability (name_p_female from the
+        # classifier signals).  The hard label drives the legacy AIR;
+        # the soft probabilities drive AIR_soft (see _air_dual below).
         gender_groups: dict[str, list] = defaultdict(list)
+        candidate_records: list = []  # used for soft-AIR aggregation
         for filename, text in resume_texts.items():
             if filename in scores:
                 result = self.detect_gender_proxy_scored(text)
                 gender = result["gender"]
+                selected = scores[filename] >= selection_threshold
+                signals = result["signals"]
+                # If the classifier produced no name signal we treat the
+                # candidate as unknown for BOTH views.  Otherwise the
+                # soft view uses the calibrated P(female|name).
+                if signals.get("name_source", "empty") == "empty":
+                    p_female_soft = None  # marker: candidate is unknown
+                else:
+                    p_female_soft = float(signals.get("name_p_female", 0.5))
                 gender_groups[gender].append({
-                    "filename": filename,
-                    "score": scores[filename],
-                    "selected": scores[filename] >= selection_threshold,
+                    "filename":   filename,
+                    "score":      scores[filename],
+                    "selected":   selected,
                     "confidence": result["confidence"],
+                })
+                candidate_records.append({
+                    "filename":      filename,
+                    "selected":      selected,
+                    "hard_gender":   gender,
+                    "p_female_soft": p_female_soft,
                 })
 
         results: dict = {
@@ -702,23 +777,75 @@ class BiasDetector:
                 ),
             }
 
-        # Adverse impact: male vs female
+        # --- Dual AIR computation ----------------------------------------
+        # We report TWO views of the same audit:
+        #
+        #   AIR_hard  — each candidate is assigned exactly one group via
+        #               the threshold-driven categorical label.  This is
+        #               the legacy / EEOC-style 4/5 rule computation.
+        #
+        #   AIR_soft  — each candidate contributes P(group) mass to each
+        #               group, using the calibrated probabilities from
+        #               the name classifier.  Borderline candidates
+        #               (e.g. p_female=0.6) contribute 0.6 to female
+        #               and 0.4 to male instead of being forced into one.
+        #
+        # Pass/fail uses min(AIR_hard, AIR_soft) — the more conservative
+        # of the two — so an adversary cannot cherry-pick the view that
+        # makes the system look fair.  See task #15 in the security review.
         male_data = gender_groups.get("male", [])
         female_data = gender_groups.get("female", [])
 
         if male_data and female_data:
-            air_result = self.adverse_impact_ratio(
+            air_hard = self.adverse_impact_ratio(
                 group_a_selected=sum(1 for r in male_data if r["selected"]),
                 group_a_total=len(male_data),
                 group_b_selected=sum(1 for r in female_data if r["selected"]),
                 group_b_total=len(female_data),
             )
-            results["gender_bias_analysis"] = air_result
+            air_soft = self._air_soft(candidate_records)
+            conservative = min(
+                air_hard["adverse_impact_ratio"],
+                air_soft["adverse_impact_ratio"],
+            )
+            results["gender_bias_analysis"] = {
+                **air_hard,
+                "adverse_impact_ratio_hard": air_hard["adverse_impact_ratio"],
+                "adverse_impact_ratio_soft": air_soft["adverse_impact_ratio"],
+                "soft_male_mass":            air_soft["male_total_mass"],
+                "soft_female_mass":          air_soft["female_total_mass"],
+                "soft_male_rate":            air_soft["male_rate"],
+                "soft_female_rate":          air_soft["female_rate"],
+                # The conservative-of-both pass/fail.  Top-level
+                # passes_4_5_rule mirrors this so the existing schema
+                # remains valid; hard-only callers can still read the
+                # original `adverse_impact_ratio` key.
+                "adverse_impact_ratio":      round(conservative, 4),
+                "passes_4_5_rule":           conservative >= self.adverse_impact_threshold,
+                "risk_level":                self._risk_level(conservative),
+                "agreement_gap":             round(
+                    abs(air_hard["adverse_impact_ratio"]
+                        - air_soft["adverse_impact_ratio"]),
+                    4,
+                ),
+            }
 
-            if not air_result["passes_4_5_rule"]:
+            if not results["gender_bias_analysis"]["passes_4_5_rule"]:
                 results["recommendations"].append(
-                    f"[WARN] Gender AIR = {air_result['adverse_impact_ratio']:.2f} "
-                    f"(below 0.80 threshold). Potential gender bias detected."
+                    f"[WARN] Gender AIR (conservative of hard/soft) = "
+                    f"{conservative:.2f} (below "
+                    f"{self.adverse_impact_threshold:.2f} threshold). "
+                    f"Hard AIR={air_hard['adverse_impact_ratio']:.2f}, "
+                    f"Soft AIR={air_soft['adverse_impact_ratio']:.2f}. "
+                    f"Potential gender bias detected."
+                )
+            elif (results["gender_bias_analysis"]["agreement_gap"]
+                  > 0.10):
+                results["recommendations"].append(
+                    f"[NOTE] Hard and soft AIR disagree by "
+                    f"{results['gender_bias_analysis']['agreement_gap']:.2f}. "
+                    f"Borderline name predictions are material — review "
+                    f"the per-candidate name_source breakdown."
                 )
 
         # Score distribution

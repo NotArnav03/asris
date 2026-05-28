@@ -446,6 +446,91 @@ class TestBiasDetector:
         assert "gender_distribution" in audit
         assert "recommendations" in audit
 
+    # --- Dual soft/hard AIR (Task #15) ---------------------------------
+
+    def test_audit_emits_both_soft_and_hard_air(self):
+        from fairness.bias_detector import BiasDetector
+        detector = BiasDetector()
+        texts = {
+            f"m{i}.txt": f"John{i} Smith\nSoftware Engineer" for i in range(6)
+        } | {
+            f"f{i}.txt": f"Priya{i} Sharma\nML Engineer" for i in range(6)
+        }
+        scores = {n: 0.5 + i * 0.01 for i, n in enumerate(texts)}
+        audit = detector.audit_ranking_bias(texts, scores)
+        analysis = audit["gender_bias_analysis"]
+        assert "adverse_impact_ratio_hard" in analysis
+        assert "adverse_impact_ratio_soft" in analysis
+        # Pass/fail uses the conservative of the two.
+        assert (analysis["adverse_impact_ratio"]
+                == min(analysis["adverse_impact_ratio_hard"],
+                       analysis["adverse_impact_ratio_soft"]))
+
+    def test_soft_air_uses_probability_mass_for_borderline_candidates(self):
+        # Construct a scenario where the hard view excludes borderline
+        # candidates but the soft view includes them as partial mass.
+        # Specifically: 4 selected males, 4 unselected males, plus 4
+        # selected borderline-female (p_female ~ 0.7).  Hard AIR sees
+        # the borderline females as "female" (selected_rate=1.0 vs
+        # male_rate=0.5 -> AIR=0.5).  Soft AIR sees them as 70% female
+        # mass / 30% male mass, which shifts the rates.
+        from fairness.bias_detector import BiasDetector
+        detector = BiasDetector()
+        # Hand-build the audit via the soft helper directly so the
+        # behaviour is unit-tested independent of the classifier.
+        records = (
+            [{"selected": True,  "p_female_soft": 0.05}] * 4 +  # 4 sel male
+            [{"selected": False, "p_female_soft": 0.05}] * 4 +  # 4 unsel male
+            [{"selected": True,  "p_female_soft": 0.70}] * 4    # 4 sel border-f
+        )
+        soft = BiasDetector._air_soft(records)
+        # Male total mass: 4*0.95 + 4*0.95 + 4*0.30 = 8.8
+        # Male selected mass: 4*0.95 + 4*0.30 = 5.0
+        # Female total mass: 4*0.05 + 4*0.05 + 4*0.70 = 3.2
+        # Female selected mass: 4*0.05 + 4*0.70 = 3.0
+        # male_rate = 5.0 / 8.8 = 0.5682
+        # female_rate = 3.0 / 3.2 = 0.9375
+        # AIR = 0.5682 / 0.9375 = 0.606
+        assert abs(soft["male_total_mass"]    - 8.80) < 0.05
+        assert abs(soft["female_total_mass"]  - 3.20) < 0.05
+        assert abs(soft["male_rate"]    - 0.5682) < 0.01
+        assert abs(soft["female_rate"]  - 0.9375) < 0.01
+        assert abs(soft["adverse_impact_ratio"] - 0.606) < 0.01
+
+    def test_soft_air_excludes_unknown_candidates(self):
+        from fairness.bias_detector import BiasDetector
+        records = [
+            {"selected": True,  "p_female_soft": 0.95},
+            {"selected": False, "p_female_soft": 0.05},
+            {"selected": True,  "p_female_soft": None},  # excluded
+        ]
+        soft = BiasDetector._air_soft(records)
+        # The "None" record contributes nothing to either bucket.
+        assert abs(soft["male_total_mass"]   - 1.00) < 1e-6
+        assert abs(soft["female_total_mass"] - 1.00) < 1e-6
+
+    def test_audit_flags_disagreement_between_soft_and_hard(self):
+        # When the hard AIR passes but the soft AIR fails (or vice
+        # versa), the audit should emit a NOTE flagging the gap so
+        # reviewers know the verdict hinges on borderline calls.
+        from fairness.bias_detector import BiasDetector
+        detector = BiasDetector()
+        # We can't easily construct this through detect_gender_proxy_scored
+        # without specific names, so check the agreement_gap field is
+        # populated and matches the underlying numbers.
+        texts = {
+            "p.txt": "Priya Sharma\nEngineer",
+            "j.txt": "John Smith\nEngineer",
+            "f.txt": "Fatima Khan\nAnalyst",
+            "m.txt": "Mohammed Ali\nAnalyst",
+        }
+        scores = {"p.txt": 0.9, "j.txt": 0.8, "f.txt": 0.7, "m.txt": 0.6}
+        audit = detector.audit_ranking_bias(texts, scores)
+        analysis = audit["gender_bias_analysis"]
+        gap = abs(analysis["adverse_impact_ratio_hard"]
+                  - analysis["adverse_impact_ratio_soft"])
+        assert abs(analysis["agreement_gap"] - gap) < 1e-4
+
 
 # ═══════════════════════════════════════════════════════════════
 # Name Classifier Tests (Issue #3)
