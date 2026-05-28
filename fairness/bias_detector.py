@@ -160,7 +160,9 @@ GENDERED_NAMES: dict[str, set[str]] = {
         "todd", "carl", "cameron", "logan", "hunter", "mason", "liam",
         "oliver", "elijah", "lucas", "aiden", "owen", "caleb",
         "connor", "wyatt", "jayden", "gabriel", "dylan", "jordan",
-        "bryan", "billy", "lee", "marcus", "christopher", "alexander",
+        # "lee" removed — predominantly used as a surname and as a
+        # unisex given name; see _UNISEX_NAMES.
+        "bryan", "billy", "marcus", "christopher", "alexander",
         "sebastian", "leo", "julian", "evan", "isaac", "dominic",
         "parker", "cooper", "lincoln", "xavier", "eli", "colton",
         "nolan", "jaxon", "hudson", "levi", "landon", "jackson",
@@ -178,11 +180,17 @@ GENDERED_NAMES: dict[str, set[str]] = {
         "vikas", "aarav", "dev", "harish", "krishna", "vishnu",
         "santosh", "ramesh", "naresh", "mahesh", "dinesh", "ganesh",
         # East Asian (male)
+        # NOTE: Chinese family names (chen, li, wang, zhang, liu) and
+        # the unisex Korean syllable "hyun" were removed from this list.
+        # Family names carry no given-name gender signal, and including
+        # them caused every East Asian candidate to be misclassified
+        # male regardless of actual gender; "hyun" appeared in BOTH the
+        # male and female lists, which silently cancelled to "unknown".
+        # See _UNISEX_NAMES for unisex Korean/Chinese tokens.
         "wei", "ming", "jun", "yang", "xiao", "lei", "fang", "hao",
         "long", "tao", "ping", "bo", "zhen", "jian", "hiro",
         "kenji", "takashi", "naoki", "daisuke", "ryo", "yuto",
-        "seung", "hyun", "jae", "sung", "dong", "tae", "jin",
-        "chen", "li", "wang", "zhang", "liu",
+        "seung", "jae", "sung", "dong", "tae",
         # Arab / Middle Eastern (male)
         "mohammed", "omar", "hassan", "ali", "ahmed", "khalid",
         "yusuf", "ibrahim", "mustafa", "tariq", "walid", "bilal",
@@ -225,10 +233,15 @@ GENDERED_NAMES: dict[str, set[str]] = {
         "archana", "aparna", "shreya", "riya", "tanya", "sangita",
         "namita", "sarita", "bharati",
         # East Asian (female)
+        # NOTE: the Korean syllables hyun / young / min / ji / soo were
+        # removed because they are routinely used across genders in
+        # modern Korean given names (and "hyun" was simultaneously in
+        # the male list, producing a silent cancellation).  They now
+        # live in _UNISEX_NAMES and contribute no gender signal.
         "mei", "ling", "xiu", "yan", "fei", "qian", "jing", "yun",
         "shu", "xia", "akiko", "yoko", "haruko", "noriko", "keiko",
         "sachiko", "tomoko", "yuki", "sakura", "hana", "aiko",
-        "soo", "ji", "eun", "young", "hyun", "min", "na",
+        "eun", "na",
         "hua", "hong", "qing",
         # Arab / Middle Eastern (female)
         "fatima", "amira", "nadia", "layla", "yasmin", "nour",
@@ -237,6 +250,61 @@ GENDERED_NAMES: dict[str, set[str]] = {
         "maryam", "sara",
     },
 }
+
+
+# --- Unisex given names ----------------------------------------------------
+# Tokens that are statistically used across genders in their source culture.
+# These are MATCHED so that a name like "Hyun Park" or "Jordan Smith" is
+# correctly recognised as a first name (and so it can be excluded from
+# pronoun-only or title-only fallbacks downstream), but they vote NEITHER
+# male nor female from the name channel.
+#
+# Curated conservatively — every token here was either (a) present in both
+# the male and female lists in a prior revision (a structural bug) or
+# (b) routinely used across genders in the source culture per public
+# naming statistics.  Western unisex names (jordan, avery, taylor, ...)
+# remain hard-classified for now and are handled by the probabilistic
+# classifier introduced in task #3.
+_UNISEX_NAMES: set = {
+    # Korean syllables that appear as unisex given names.
+    # ("eun" is intentionally LEFT in the female list — it is strongly
+    # female-coded in modern Korean usage despite occasional male use,
+    # and the import-time invariant guards against re-adding it here.)
+    "hyun", "young", "min", "ji", "soo", "jin", "joon", "hye",
+    # Common Chinese given-name characters used across genders
+    "yu", "an",
+    # Western unisex (most-flagrant cases — extended in task #3)
+    "lee",
+}
+
+
+# --- Vocab consistency assertion ------------------------------------------
+# Fail fast at import time if the name vocabulary develops cross-list
+# contamination.  These invariants are LOAD-BEARING for the fairness audit:
+# a single token appearing in two sets silently produces "unknown" for
+# every candidate whose first name happens to match it, which then drops
+# them from the AIR denominator.  See task #2 in the security review.
+def _assert_name_vocab_invariants() -> None:
+    male = GENDERED_NAMES["male"]
+    female = GENDERED_NAMES["female"]
+    overlap_mf = male & female
+    overlap_mu = male & _UNISEX_NAMES
+    overlap_fu = female & _UNISEX_NAMES
+    if overlap_mf:
+        raise AssertionError(
+            f"GENDERED_NAMES: male/female collision: {sorted(overlap_mf)}"
+        )
+    if overlap_mu:
+        raise AssertionError(
+            f"GENDERED_NAMES: male/unisex collision: {sorted(overlap_mu)}"
+        )
+    if overlap_fu:
+        raise AssertionError(
+            f"GENDERED_NAMES: female/unisex collision: {sorted(overlap_fu)}"
+        )
+
+
+_assert_name_vocab_invariants()
 
 
 class BiasDetector:
@@ -295,6 +363,11 @@ class BiasDetector:
             "neutral_title": False,
             "male_name": False,
             "female_name": False,
+            # True when a recognised unisex first-name token (see
+            # _UNISEX_NAMES) is present in the header.  Does NOT vote
+            # for either gender — surfaced so callers can distinguish
+            # "name detected, gender ambiguous" from "no name detected".
+            "unisex_name": False,
         }
 
         # 1. Pronoun scan (full text, lowercased)
@@ -309,15 +382,25 @@ class BiasDetector:
         signals["female_title"]  = _honorific_fires(_HONORIFIC_PATTERNS["female"],  header_orig)
         signals["neutral_title"] = _honorific_fires(_HONORIFIC_PATTERNS["neutral"], header_orig)
 
-        # 3. Name scan: check first two header lines, each word
+        # 3. Name scan: check first two header lines, each word.
+        # Unisex tokens (_UNISEX_NAMES) are surfaced as a separate signal
+        # but contribute zero score weight — they are NOT evidence of
+        # either gender.  This prevents tokens like "Hyun" or "Lee"
+        # from leaking into either bucket (the prior implementation
+        # listed them under both, which silently cancelled to "unknown"
+        # and quietly excluded those candidates from the AIR denominator).
         header_lines = text.strip().split("\n")[:2]
         header_tokens = " ".join(header_lines).lower().split()
         for token in header_tokens:
             clean = re.sub(r"[^a-z]", "", token)
+            if not clean:
+                continue
             if clean in GENDERED_NAMES["male"]:
                 signals["male_name"] = True
             if clean in GENDERED_NAMES["female"]:
                 signals["female_name"] = True
+            if clean in _UNISEX_NAMES:
+                signals["unisex_name"] = True
 
         # 4. Score aggregation
         male_score = signals["male_pronoun"]

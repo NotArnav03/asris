@@ -301,6 +301,68 @@ class TestBiasDetector:
         )
         assert result["signals"]["male_title"] is True
 
+    # --- Name vocab hygiene (Issue #2) --------------------------------
+    # Surnames must not vote as given names, and unisex tokens must not
+    # appear in both gendered lists.  Each test below corresponds to a
+    # previously-broken case.
+
+    def test_chinese_surname_alone_does_not_vote_male(self):
+        from fairness.bias_detector import BiasDetector
+        # "Chen" used as surname only — no given-name signal should fire.
+        # Previously "chen" was in the male given-name list, so any
+        # East Asian candidate was misclassified male regardless of gender.
+        result = BiasDetector.detect_gender_proxy_scored("Chen Engineering Team Lead")
+        assert result["signals"]["male_name"] is False
+        assert result["signals"]["female_name"] is False
+
+    def test_sarah_chen_is_classified_female(self):
+        from fairness.bias_detector import BiasDetector
+        # Previously: Sarah fires female_name AND Chen fires male_name,
+        # the two cancel, and the candidate is silently dropped to
+        # "unknown" and erased from AIR.  Must now classify as female.
+        result = BiasDetector.detect_gender_proxy_scored("Sarah Chen\nData Scientist")
+        assert result["signals"]["female_name"] is True
+        assert result["signals"]["male_name"] is False
+        assert result["gender"] == "female"
+
+    def test_wang_li_zhang_liu_not_in_male_list(self):
+        from fairness.bias_detector import GENDERED_NAMES
+        for surname in ("chen", "li", "wang", "zhang", "liu", "lee"):
+            assert surname not in GENDERED_NAMES["male"], (
+                f"{surname!r} is a surname, not a given name — must not vote male"
+            )
+
+    def test_hyun_is_unisex_not_double_listed(self):
+        from fairness.bias_detector import GENDERED_NAMES, _UNISEX_NAMES
+        assert "hyun" not in GENDERED_NAMES["male"]
+        assert "hyun" not in GENDERED_NAMES["female"]
+        assert "hyun" in _UNISEX_NAMES
+
+    def test_unisex_korean_name_does_not_vote_either_way(self):
+        from fairness.bias_detector import BiasDetector
+        result = BiasDetector.detect_gender_proxy_scored("Hyun Park\nSoftware Engineer")
+        assert result["signals"]["male_name"] is False
+        assert result["signals"]["female_name"] is False
+        assert result["signals"]["unisex_name"] is True
+        assert result["gender"] == "unknown"
+
+    def test_name_vocab_consistency_invariants(self):
+        # The vocab is checked at import time, but we re-assert here
+        # so the test failure is informative if anyone disables the
+        # import-time check.
+        from fairness.bias_detector import GENDERED_NAMES, _UNISEX_NAMES
+        male = GENDERED_NAMES["male"]
+        female = GENDERED_NAMES["female"]
+        assert male.isdisjoint(female), (
+            f"male/female collision: {sorted(male & female)}"
+        )
+        assert male.isdisjoint(_UNISEX_NAMES), (
+            f"male/unisex collision: {sorted(male & _UNISEX_NAMES)}"
+        )
+        assert female.isdisjoint(_UNISEX_NAMES), (
+            f"female/unisex collision: {sorted(female & _UNISEX_NAMES)}"
+        )
+
     def test_mrs_smith_jones_hyphenated_name_fires(self):
         from fairness.bias_detector import BiasDetector
         result = BiasDetector.detect_gender_proxy_scored(
