@@ -1,0 +1,122 @@
+{
+  "model": "name-gender-classifier",
+  "version": "1.0.0",
+  "trained_at": "2026-05-28T17:18:12.122145+00:00",
+  "random_state": 20251128,
+  "training_corpus": {
+    "path": "data/names/training_corpus.csv",
+    "rows": 45230,
+    "license": "GFDL-1.2-or-later",
+    "attribution": "data/names/ATTRIBUTION.md"
+  },
+  "pipeline": {
+    "vectorizer": {
+      "type": "TfidfVectorizer",
+      "analyzer": "char_wb",
+      "ngram_range": [
+        2,
+        5
+      ],
+      "min_df": 2,
+      "max_df": 0.95,
+      "sublinear_tf": true
+    },
+    "base_classifier": {
+      "type": "LogisticRegression",
+      "solver": "liblinear",
+      "C": 1.0,
+      "max_iter": 2000
+    },
+    "calibration": {
+      "type": "CalibratedClassifierCV",
+      "method": "isotonic",
+      "cv": 5
+    }
+  },
+  "training": {
+    "n_train": 36184,
+    "n_test": 9046,
+    "split": "stratified by (culture, y) — see train_classifier.py",
+    "sample_weighted": true,
+    "fit_seconds": 3.3
+  },
+  "metrics": {
+    "overall": {
+      "n": 9046,
+      "accuracy": 0.8781,
+      "roc_auc": 0.9414,
+      "brier": 0.0907,
+      "ece": 0.0123
+    },
+    "by_culture": {
+      "arab": {
+        "n": 996,
+        "accuracy": 0.7641,
+        "brier": 0.1709,
+        "ece": 0.0902,
+        "roc_auc": 0.8254
+      },
+      "east_asian": {
+        "n": 1974,
+        "accuracy": 0.9103,
+        "brier": 0.0679,
+        "ece": 0.0601,
+        "roc_auc": 0.9352
+      },
+      "european_other": {
+        "n": 4150,
+        "accuracy": 0.9017,
+        "brier": 0.0743,
+        "ece": 0.0239,
+        "roc_auc": 0.9603
+      },
+      "other": {
+        "n": 36,
+        "accuracy": 0.7778,
+        "brier": 0.1549,
+        "ece": 0.2032,
+        "roc_auc": 0.9016
+      },
+      "slavic": {
+        "n": 815,
+        "accuracy": 0.8982,
+        "brier": 0.079,
+        "ece": 0.0838,
+        "roc_auc": 0.9683
+      },
+      "south_asian": {
+        "n": 256,
+        "accuracy": 0.8906,
+        "brier": 0.089,
+        "ece": 0.0801,
+        "roc_auc": 0.9503
+      },
+      "western": {
+        "n": 819,
+        "accuracy": 0.7998,
+        "brier": 0.1409,
+        "ece": 0.066,
+        "roc_auc": 0.8822
+      }
+    }
+  },
+  "calibration_target": {
+    "ece_threshold": 0.05,
+    "interpretation": "ECE < 0.05 is the field convention for 'well-calibrated'.",
+    "overall_meets_target": true
+  },
+  "intended_use": [
+    "Aggregate fairness auditing of resume-ranking systems.",
+    "Group attribution at the AIR / DPD / FCR level only."
+  ],
+  "out_of_scope_use": [
+    "Individual hiring decisions.",
+    "Any application where the candidate's true gender identity matters.",
+    "Names not romanised to ASCII (e.g. CJK ideographs)."
+  ],
+  "limitations": [
+    "Coverage is best for European, East Asian, and Arab names (see by_culture metrics).  South Asian and Western unisex names have smaller training sets — interpret probabilities near 0.5 conservatively.",
+    "Gender is treated as binary because the upstream corpus uses binary labels.  This does not reflect the full spectrum of gender identity.",
+    "Calibration is performed on the same data distribution as training; cross-distribution drift (e.g. a corpus of African names) will degrade calibration."
+  ]
+}
