@@ -446,6 +446,96 @@ class TestBiasDetector:
         assert "gender_distribution" in audit
         assert "recommendations" in audit
 
+    # --- Surname handling (Task #16) -----------------------------------
+
+    def test_surname_only_header_produces_no_gender_signal(self):
+        # "Park" alone should NOT vote male (or female) even though the
+        # OOV model would otherwise predict strongly male for that
+        # token.  This is the core surname-attack fix.
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "Park\nSoftware Engineer at TechCorp"
+        )
+        assert r["signals"]["name_source"] == "empty"
+        assert r["signals"]["name_is_surname"] is True
+        assert r["signals"]["male_name"] is False
+        assert r["signals"]["female_name"] is False
+        assert r["gender"] == "unknown"
+
+    def test_jones_smith_khan_are_recognised_as_surnames(self):
+        from fairness.bias_detector import BiasDetector
+        for sn in ("Jones", "Smith", "Khan", "Patel", "Park"):
+            r = BiasDetector.detect_gender_proxy_scored(
+                f"{sn}\nSenior Engineer"
+            )
+            assert r["signals"]["name_is_surname"] is True, (
+                f"{sn!r} should be recognised as a surname"
+            )
+            assert r["signals"]["name_source"] == "empty", (
+                f"{sn!r} alone must not produce a name signal"
+            )
+
+    def test_given_name_with_surname_picks_given_name(self):
+        # "Priya Sharma" — Sharma is a surname, Priya is a given name.
+        # The classifier must pick Priya and ignore Sharma.
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "Priya Sharma\nML Engineer"
+        )
+        assert r["signals"]["name_token"] == "priya"
+        assert r["signals"]["name_is_surname"] is False
+        assert r["signals"]["female_name"] is True
+
+    def test_comma_lastname_first_format_picks_given_name(self):
+        # "Doe, John" — academic-CV format.  The right-of-comma part
+        # ("John") should drive the signal, not the left-of-comma
+        # surname ("Doe").
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "Doe, John\nResearch Scientist"
+        )
+        assert r["signals"]["name_token"] == "john"
+        assert r["signals"]["male_name"] is True
+
+    def test_comma_with_suffix_falls_through_to_line1(self):
+        # "John Doe, PhD" — line1 has a comma but the right side is
+        # just a denylisted suffix.  Cascade must fall through and
+        # use line1 ("John Doe") as-is.
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "John Doe, PhD\nProfessor"
+        )
+        assert r["signals"]["name_token"] == "john"
+        assert r["signals"]["male_name"] is True
+
+    def test_classifier_result_carries_surname_flags(self):
+        # `is_surname` flags any token on the surname denylist (US Census
+        # + curated multi-cultural).  `is_surname_only` is the derived
+        # property callers use — True only when there's no strong
+        # given-name lookup evidence to compete with the surname status.
+        from fairness.names.classifier import predict
+        # Park / Patel: surnames with no strong given-name evidence ->
+        # both flags True.
+        for tok in ("Park", "Patel", "Jones"):
+            r = predict(tok)
+            assert r.is_surname is True, f"{tok} should be on surname list"
+            assert r.is_surname_only is True, (
+                f"{tok} should be surname-only (no strong given-name lookup)"
+            )
+        # John: BOTH a top US surname AND a strongly-attested given name
+        # in the corpus.  is_surname=True but is_surname_only=False so
+        # downstream gender detection still uses John.
+        john = predict("John")
+        assert john.is_surname is True, "John IS on the US Census surname list"
+        assert john.is_surname_only is False, (
+            "John must NOT be surname-only — it has a strong given-name lookup"
+        )
+        # Priya: not on the surname list -> both flags False.
+        priya = predict("Priya")
+        assert priya.is_surname is False
+        assert priya.is_surname_only is False
+
+
     # --- Dual soft/hard AIR (Task #15) ---------------------------------
 
     def test_audit_emits_both_soft_and_hard_air(self):

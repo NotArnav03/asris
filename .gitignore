@@ -34,6 +34,8 @@ data/*
 !data/names/*.txt
 !data/names/firstnames_raw.csv
 !data/names/training_corpus.csv
+!data/names/us_surnames_raw.csv
+!data/names/surnames.csv
 
 # Whitelist the trained name-classifier artifact (small pickle + JSON).
 !fairness/names/model.pkl

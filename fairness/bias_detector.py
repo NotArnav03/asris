@@ -308,6 +308,14 @@ _RESUME_VOCAB_DENYLIST: frozenset = frozenset({
     # alone without a following name (e.g. a resume that says "Mr" in
     # the header).
     "mr", "mrs", "ms", "miss", "dr", "sir", "madam", "prof", "mister",
+    # Academic degree suffixes that frequently appear after a comma
+    # in the resume header ("John Doe, PhD" / "Jane Smith, MD").
+    # Without these, the comma-cascade strategy that takes the
+    # right-of-comma part would feed the suffix to the classifier
+    # and produce a spurious gender signal.
+    "phd", "msc", "mba", "ba", "bs", "ma", "md", "jd", "dphil",
+    "llm", "llb", "edd", "dvm", "dds", "pe", "esq", "cfa", "cpa",
+    "rn", "np", "do",
 })
 
 # Minimum classifier confidence (=|p - 0.5| * 2) required for a token
@@ -418,6 +426,12 @@ class BiasDetector:
             "name_source": "empty",
             # The header token that produced name_p_female, lower-cased.
             "name_token": "",
+            # True when the only Title-cased header tokens we could find
+            # are on the surname denylist (data/names/surnames.csv).
+            # In that case name_source stays "empty" — surnames carry
+            # no reliable gender signal — but the token is recorded
+            # here so audit reports can disclose the situation.
+            "name_is_surname": False,
         }
 
         # 1. Pronoun scan (full text, lowercased)
@@ -459,27 +473,87 @@ class BiasDetector:
         #     too uncertain to vote for either gender; the candidate is
         #     marked unisex_name=True but neither male_name nor
         #     female_name fires.
-        from fairness.names.classifier import predict
+        from fairness.names.classifier import predict_many
 
+        def _extract_candidates(block: str) -> list:
+            """Tokens from `block` that pass: Title-cased original
+            (first letter uppercase), length >= 2, not in the
+            resume-vocab denylist.  Preserves input order."""
+            out: list = []
+            for raw in block.split():
+                cleaned = re.sub(r"[^A-Za-z]", "", raw)
+                if len(cleaned) < 2 or not cleaned[0].isupper():
+                    continue
+                if cleaned.lower() in _RESUME_VOCAB_DENYLIST:
+                    continue
+                out.append(cleaned)
+            return out
+
+        # Cascade of header-extraction strategies.  We try each in
+        # order and stop at the first that produces a non-surname
+        # name signal.  The cascade handles three common resume
+        # formats:
+        #
+        #   "Doe, John\nSoftware Engineer"  ->  right-of-comma wins
+        #     (academic CV last-name-first format)
+        #
+        #   "John Doe, PhD\nEngineer"       ->  line1 as-is wins
+        #     (right-of-comma is "PhD" which fails the denylist;
+        #      cascade falls through to the unrestricted line1)
+        #
+        #   "Senior Software Engineer\nJohn Doe"  ->  combined wins
+        #     (line1 is all denylisted vocab; line2 has the name)
         header_lines = text.strip().split("\n")[:2]
-        first_plausible: str = ""
-        for raw in " ".join(header_lines).split():
-            cleaned = re.sub(r"[^A-Za-z]", "", raw)
-            if len(cleaned) < 2:
+        line1 = header_lines[0] if header_lines else ""
+        strategies: list = []
+        if "," in line1:
+            strategies.append(line1.split(",", 1)[1])
+        strategies.append(line1)
+        if len(header_lines) > 1:
+            strategies.append(" ".join(header_lines))
+
+        # Cascade semantics:
+        #   - If a strategy yields ZERO usable candidates after the
+        #     vocab denylist + Title-case + length filter, fall through
+        #     to the next strategy (this one contributed nothing).
+        #   - If a strategy yields ANY candidates, this strategy IS our
+        #     answer: pick the first non-surname-only as chosen, or
+        #     record the first surname as a surname-only diagnostic.
+        #     Either way, STOP — falling through after surname-only
+        #     candidates would let broader strategies pick up unrelated
+        #     proper nouns from later sections of the resume (company
+        #     names like "TechCorp", product names, technologies)
+        #     instead of recognising that the header genuinely had
+        #     only a surname.
+        chosen = None
+        first_surname = None
+        for block in strategies:
+            cands = _extract_candidates(block)
+            if not cands:
                 continue
-            if not cleaned[0].isupper():
-                continue  # resumes write names Title-cased or all-caps
-            if cleaned.lower() in _RESUME_VOCAB_DENYLIST:
-                continue
-            first_plausible = cleaned
+            results = predict_many(cands)
+            non_surnames = [r for r in results if not r.is_surname_only]
+            if non_surnames:
+                chosen = non_surnames[0]
+            elif results:
+                first_surname = results[0]
             break
 
-        if first_plausible:
-            result = predict(first_plausible)
-            if result.source != "empty":
-                signals["name_p_female"] = round(float(result.p_female), 4)
-                signals["name_source"]   = result.source
-                signals["name_token"]    = result.name
+        if chosen is not None and chosen.source != "empty":
+            signals["name_p_female"]   = round(float(chosen.p_female), 4)
+            signals["name_source"]     = chosen.source
+            signals["name_token"]      = chosen.name
+            signals["name_is_surname"] = False
+        elif first_surname is not None:
+            # Only surname-only tokens in the header — record the
+            # diagnostic but leave name_source="empty" so this
+            # candidate is treated as "no name signal" by the AIR
+            # aggregation.  Surname-only tokens (no strong given-name
+            # lookup evidence) don't reliably encode the bearer's
+            # gender — the classifier's substring-driven OOV prediction
+            # is not trustworthy here.
+            signals["name_token"]      = first_surname.name
+            signals["name_is_surname"] = True
 
         # Derived legacy booleans.  Lookup hits with high distance from
         # 0.5, OR model hits that clear the confidence floor, vote for
