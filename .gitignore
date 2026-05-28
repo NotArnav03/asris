@@ -14,13 +14,30 @@ venv/
 env/
 
 # ─── Data (large files) ─────────────────────
-data/
+# Ignore the contents of data/ but NOT the directory itself, so we can
+# whitelist the name-classifier corpus below.  The negation rule cannot
+# re-include a path whose parent directory has been excluded, so we use
+# `data/*` (children) rather than `data/` (the directory).
+data/*
 *.csv
 *.pkl
 *.npy
 *.npz
 *.h5
 *.hdf5
+
+# Whitelist the name-classifier training corpus and its tools.
+# These files are part of the fairness audit and must be reproducible.
+!data/names/
+!data/names/*.py
+!data/names/*.md
+!data/names/*.txt
+!data/names/firstnames_raw.csv
+!data/names/training_corpus.csv
+
+# Whitelist the trained name-classifier artifact (small pickle + JSON).
+!fairness/names/model.pkl
+!fairness/names/model_card.json
 
 # ─── Model Files & Caches ───────────────────
 *.pt
