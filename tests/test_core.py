@@ -391,6 +391,118 @@ class TestBiasDetector:
 
 
 # ═══════════════════════════════════════════════════════════════
+# Name Classifier Tests (Issue #3)
+# ═══════════════════════════════════════════════════════════════
+
+class TestNameClassifier:
+    """Tests for the calibrated char-ngram name classifier and the
+    lookup-fastpath hybrid in fairness.names.classifier.
+
+    These are integration tests against the committed model.pkl —
+    they will FAIL if the model is missing or its calibration drifts
+    materially.
+    """
+
+    def test_lookup_short_unisex_names_via_fastpath(self):
+        # The model's n-gram generalisation tends to misclassify short
+        # ambiguous names (wei, lee, kim) because their substrings are
+        # dominated by majority-class patterns.  The lookup fastpath is
+        # what makes the system correct on these.  Each of these names
+        # must report source='lookup' AND have a p_female within 0.15
+        # of the per-name empirical label from training_corpus.csv.
+        from fairness.names.classifier import predict
+        cases = {
+            "wei":    0.50,
+            "lee":    0.35,
+            "kim":    0.50,
+            "hyun":   0.50,
+            "taylor": 0.25,
+            "jordan": 0.29,
+        }
+        for name, target in cases.items():
+            r = predict(name)
+            assert r.source == "lookup", (
+                f"{name!r} should hit the corpus lookup, got source={r.source}"
+            )
+            assert abs(r.p_female - target) <= 0.15, (
+                f"{name!r} corpus says ~{target:.2f}, classifier says {r.p_female:.3f}"
+            )
+
+    def test_strong_signals_are_high_confidence(self):
+        from fairness.names.classifier import predict
+        for name in ("priya", "fatima", "sarah", "aisha", "maria", "anita"):
+            r = predict(name)
+            assert r.p_female >= 0.85, f"{name} should be ~female: {r.p_female:.3f}"
+        for name in ("john", "ahmed", "mohammed", "sebastian", "rahul"):
+            r = predict(name)
+            assert r.p_female <= 0.15, f"{name} should be ~male: {r.p_female:.3f}"
+
+    def test_oov_name_falls_through_to_model(self):
+        # Made-up name unlikely to be in the corpus.  Confirms the model
+        # path runs and returns a valid probability.
+        from fairness.names.classifier import predict
+        r = predict("Xqzaaria")
+        assert r.source == "model"
+        assert 0.0 <= r.p_female <= 1.0
+
+    def test_empty_input_returns_neutral(self):
+        from fairness.names.classifier import predict
+        r = predict("")
+        assert r.source == "empty"
+        assert r.p_female == 0.5
+
+    def test_non_alpha_input_returns_neutral(self):
+        from fairness.names.classifier import predict
+        r = predict("12345 !!")
+        assert r.source == "empty"
+
+    def test_hard_label_thresholding(self):
+        from fairness.names.classifier import predict
+        # John is strongly male and Priya strongly female; default 0.85
+        # threshold should resolve cleanly.
+        assert predict("john").hard_label() == "male"
+        assert predict("priya").hard_label() == "female"
+        # A near-unisex name should fall into 'unknown' at the default
+        # threshold.  We use 'wei' which is corpus-labelled 0.5.
+        assert predict("wei").hard_label() == "unknown"
+
+    def test_confidence_is_distance_from_unisex(self):
+        from fairness.names.classifier import NameGenderResult
+        r = NameGenderResult(name="x", p_female=0.5, source="empty")
+        assert r.confidence == 0.0
+        r2 = NameGenderResult(name="x", p_female=1.0, source="lookup")
+        assert r2.confidence == 1.0
+        r3 = NameGenderResult(name="x", p_female=0.0, source="lookup")
+        assert r3.confidence == 1.0
+        r4 = NameGenderResult(name="x", p_female=0.85, source="lookup")
+        assert abs(r4.confidence - 0.70) < 1e-9
+
+    def test_batch_predict_matches_singletons(self):
+        from fairness.names.classifier import predict, predict_many
+        names = ["John", "Priya", "Xqzaaria", "", "Mohammed"]
+        batch = predict_many(names)
+        for raw, b in zip(names, batch):
+            single = predict(raw)
+            assert abs(b.p_female - single.p_female) < 1e-9
+            assert b.source == single.source
+
+    def test_overall_calibration_target_met(self):
+        # The model_card declares calibration_target.overall_meets_target.
+        # If this regresses (e.g. someone re-trains with worse data),
+        # the test fires.
+        import json
+        from pathlib import Path
+        card = json.loads(
+            Path("fairness/names/model_card.json").read_text(encoding="utf-8")
+        )
+        assert card["calibration_target"]["overall_meets_target"] is True, (
+            "Overall ECE > 0.05 — model is no longer field-calibrated"
+        )
+        assert card["metrics"]["overall"]["accuracy"] >= 0.85
+        assert card["metrics"]["overall"]["roc_auc"] >= 0.90
+
+
+# ═══════════════════════════════════════════════════════════════
 # Fairness-Constrained Re-ranking Tests
 # ═══════════════════════════════════════════════════════════════
 
