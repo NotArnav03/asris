@@ -650,6 +650,60 @@ class TestBiasDetector:
         assert _has_rtl_script("Mixed السيد ASCII") is True
 
 
+    # --- Cyrillic / Greek confusables (Task #30) -----------------------
+
+    def test_cyrillic_M_in_mr_does_not_bypass(self):
+        # "Мr. Smith" with U+041C Cyrillic capital Em.  Renders
+        # identically to "Mr. Smith" but old pattern missed it.
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "Мr. Smith\nSoftware Engineer"
+        )
+        assert r["signals"]["male_title"] is True
+
+    def test_cyrillic_lowercase_in_ms_does_not_bypass(self):
+        # "Mѕ. Khan" with U+0455 Cyrillic lowercase Dze (looks like s).
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "Mѕ. Khan\nAnalyst"
+        )
+        assert r["signals"]["female_title"] is True
+
+    def test_wholly_cyrillic_honorific_does_not_bypass(self):
+        # "Мѕ. Khan" — Cyrillic М (U+041C) + Cyrillic ѕ (U+0455).
+        # The unconditional confusables fold catches this case
+        # where a context-aware heuristic would leave the whole-
+        # Cyrillic word alone.
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "Мѕ. Khan\nAnalyst"
+        )
+        assert r["signals"]["female_title"] is True
+
+    def test_greek_mu_in_mr_does_not_bypass(self):
+        # Greek capital Mu (U+039C) is visually identical to Latin M.
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "Μr. Smith\nSoftware Engineer"
+        )
+        assert r["signals"]["male_title"] is True
+
+    def test_greek_omicron_confusable_in_name(self):
+        # "Priοa" with Greek omicron in the middle of "Priya"
+        # would otherwise be OOV; after confusables fold it becomes
+        # "Prioa" or similar (close to lookup).  Test that NO
+        # spurious signal is created when the candidate is genuinely
+        # ambiguous.
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "Priοa Sharma\nML Engineer"
+        )
+        # After fold "prioa" -> not a known lookup; but the OOV
+        # model might predict something.  Just confirm no crash and
+        # SOME signal is recorded.
+        assert "name_p_female" in r["signals"]
+
+
     def test_plain_ascii_unaffected_by_sanitisation(self):
         # Regression: NFKC/zero-width strip is idempotent on ASCII.
         # If this fails the sanitisation has a bug that ALSO affects

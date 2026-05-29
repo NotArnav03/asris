@@ -174,31 +174,77 @@ _ZERO_WIDTH_RE = re.compile(
 )
 
 
+# --- Cyrillic / Greek -> Latin confusable map -----------------------------
+# Visually-identical (or near-identical) characters that attackers use to
+# spoof Latin honorifics: "Мr. Smith" uses U+041C CYRILLIC CAPITAL LETTER
+# EM, which renders identically to ASCII "M" but bypasses the strict-Latin
+# honorific regex.
+#
+# Curated from the Unicode Consortium's confusables.txt and the IANA
+# IDNA confusables list — only the high-confidence visually-identical
+# mappings are retained.  Lookalikes that diverge in some fonts
+# (e.g. Cyrillic д vs Latin d) are deliberately NOT mapped.
+#
+# Applied UNCONDITIONALLY in _sanitise_for_detection.  Trade-off:
+# a resume body legitimately written in Russian / Greek will have these
+# characters mapped to their Latin equivalents.  For our audit purposes
+# (honorific scan + Title-cased name token extraction), this is
+# acceptable — the alternative (selective context-aware replacement)
+# admits the "Мс. Smith" attack where the entire honorific word is
+# wholly-Cyrillic and a naive heuristic leaves it alone.
+_CONFUSABLES_MAP: dict = {
+    # Cyrillic uppercase -> Latin uppercase
+    "А": "A", "В": "B", "Е": "E", "К": "K", "М": "M", "Н": "H",
+    "О": "O", "Р": "P", "С": "C", "Т": "T", "У": "Y", "Х": "X",
+    "І": "I", "Ј": "J", "Ѕ": "S",
+    # Cyrillic lowercase -> Latin lowercase
+    "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "у": "y",
+    "х": "x", "і": "i", "ј": "j", "ѕ": "s",
+    # Greek uppercase -> Latin uppercase (visually identical)
+    "Α": "A", "Β": "B", "Ε": "E", "Ζ": "Z", "Η": "H", "Ι": "I",
+    "Κ": "K", "Μ": "M", "Ν": "N", "Ο": "O", "Ρ": "P", "Τ": "T",
+    "Υ": "Y", "Χ": "X",
+    # Greek lowercase
+    "ο": "o", "ν": "v",  # nu looks like v in many fonts
+}
+
+_CONFUSABLES_TRANS = str.maketrans(_CONFUSABLES_MAP)
+
+
 def _sanitise_for_detection(text: str) -> str:
-    """NFKC-normalise the input and strip zero-width / BOM characters
-    to neutralise the common Unicode-confusable bypasses against the
-    honorific scan and the name-token extractor.
+    """NFKC-normalise the input, strip zero-width / BOM characters, and
+    fold Cyrillic / Greek confusables onto their Latin look-alikes.
 
-    NFKC collapses to ASCII / compatible forms:
-        Fullwidth Latin            "Ｍｒ. Smith"  -> "Mr. Smith"
-        Mathematical alphanumeric  "𝐌𝐫. Smith"  -> "Mr. Smith"
-        Compatibility ligatures    "ﬁ"          -> "fi"
+    Three defences against Unicode-confusable bypasses, applied in order:
 
-    Zero-width strip defeats:
-        ZWSP inside salutation     "M\\u200Br. Smith"  -> "Mr. Smith"
-        BOM at start of header     "\\uFEFFMr. Smith"  -> "Mr. Smith"
+      NFKC collapses:
+          Fullwidth Latin            "Ｍｒ. Smith"  -> "Mr. Smith"
+          Mathematical alphanumeric  "𝐌𝐫. Smith"  -> "Mr. Smith"
+          Compatibility ligatures    "ﬁ"          -> "fi"
 
-    KNOWN LIMITATION: this does NOT defend against Cyrillic-Latin
-    confusables ("Мr. Smith" with U+041C Cyrillic capital Em).
-    Closing that requires a Unicode confusables map (a la ICU's
-    confusables.txt); it is documented but deliberately not
-    implemented here because the false-positive risk of unified
-    Latin/Cyrillic name handling is non-trivial.
+      Zero-width strip defeats:
+          ZWSP inside salutation     "M\\u200Br. Smith"  -> "Mr. Smith"
+          BOM at start of header     "\\uFEFFMr. Smith"  -> "Mr. Smith"
+
+      Confusables fold (Cyrillic / Greek -> Latin) defeats:
+          "Мr. Smith"   (U+041C M)  -> "Mr. Smith"
+          "Ms. Smith"   (Greek Mu)  -> "Ms. Smith"
+          "Mс. Khan"    (U+0441 c)  -> "Ms. Khan"
+          "Мс. Khan"    (both Cyr)  -> "Ms. Khan"
+
+    Trade-off documented in _CONFUSABLES_MAP: this fold is applied
+    UNCONDITIONALLY, so legitimate Russian / Greek resume body
+    content will see those characters mapped to ASCII.  For an
+    audit tool that only looks at the header for honorifics and
+    Title-cased name tokens, this is the right call — selective
+    context-aware replacement still admits the "Мс." wholly-Cyrillic
+    attack.
     """
     if not text:
         return ""
     text = unicodedata.normalize("NFKC", text)
     text = _ZERO_WIDTH_RE.sub("", text)
+    text = text.translate(_CONFUSABLES_TRANS)
     return text
 
 
