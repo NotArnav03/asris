@@ -1339,6 +1339,80 @@ class TestBiasDetector:
 
     # --- DPD weighting + chi-squared + Theil (Task #5 / #40) ----------
 
+    # --- Directional AIR + Wilson CIs (Task #6 / #41) ------------------
+
+    def test_air_returns_both_symmetric_and_directional(self):
+        from fairness.bias_detector import BiasDetector
+        result = BiasDetector().adverse_impact_ratio(
+            group_a_selected=40, group_a_total=50,   # 80% male sel
+            group_b_selected=20, group_b_total=50,   # 40% female sel
+            group_a_name="male", group_b_name="female",
+        )
+        assert "directional_air" in result
+        assert "adverse_impact_ratio_symmetric" in result
+        # Both should equal 0.5 here (female 0.4 / male 0.8 = 0.5)
+        assert abs(result["directional_air"] - 0.5) < 1e-9
+        assert abs(result["adverse_impact_ratio_symmetric"] - 0.5) < 1e-9
+
+    def test_air_auto_picks_lower_rate_as_protected(self):
+        from fairness.bias_detector import BiasDetector
+        result = BiasDetector().adverse_impact_ratio(
+            group_a_selected=40, group_a_total=50,
+            group_b_selected=20, group_b_total=50,
+            group_a_name="male", group_b_name="female",
+        )
+        # Female has lower rate -> auto-protected
+        assert result["protected_group"] == "female"
+        assert result["reference_group"] == "male"
+
+    def test_air_respects_explicit_protected_group(self):
+        from fairness.bias_detector import BiasDetector
+        # Caller explicitly says male is protected.  Then directional AIR
+        # uses male_rate/female_rate even though female has the lower rate.
+        result = BiasDetector().adverse_impact_ratio(
+            group_a_selected=40, group_a_total=50,    # male 0.8
+            group_b_selected=20, group_b_total=50,    # female 0.4
+            group_a_name="male", group_b_name="female",
+            protected_group="male",
+        )
+        assert result["protected_group"] == "male"
+        # AIR = male_rate / female_rate = 0.8 / 0.4 = 2.0
+        assert abs(result["directional_air"] - 2.0) < 1e-9
+
+    def test_air_wilson_intervals_present_and_well_formed(self):
+        from fairness.bias_detector import BiasDetector
+        result = BiasDetector().adverse_impact_ratio(
+            group_a_selected=40, group_a_total=50,
+            group_b_selected=20, group_b_total=50,
+            group_a_name="male", group_b_name="female",
+        )
+        # CI on each group rate is a (lower, upper) tuple within [0,1].
+        ci_a = result["male_wilson_ci"]
+        ci_b = result["female_wilson_ci"]
+        assert len(ci_a) == 2 and 0 <= ci_a[0] <= ci_a[1] <= 1
+        assert len(ci_b) == 2 and 0 <= ci_b[0] <= ci_b[1] <= 1
+        # Point rates fall inside their CIs.
+        assert ci_a[0] <= result["male_rate"] <= ci_a[1]
+        assert ci_b[0] <= result["female_rate"] <= ci_b[1]
+        # AIR CI bounds are present.
+        assert "air_lower_ci" in result
+        assert "air_upper_ci" in result
+        assert result["air_lower_ci"] <= result["directional_air"] <= result["air_upper_ci"]
+
+    def test_air_handles_zero_rate_edge_cases(self):
+        from fairness.bias_detector import BiasDetector
+        # Both zero -> AIR = 1.0 (no information, treat as parity)
+        result = BiasDetector().adverse_impact_ratio(0, 50, 0, 50)
+        assert result["directional_air"] == 1.0
+        # One zero -> AIR = 0 (protected has zero selection)
+        result = BiasDetector().adverse_impact_ratio(
+            group_a_selected=40, group_a_total=50,
+            group_b_selected=0,  group_b_total=50,
+            group_a_name="male", group_b_name="female",
+        )
+        assert result["directional_air"] == 0.0
+
+
     def test_dpd_uses_size_weighted_overall_rate_when_sizes_given(self):
         from fairness.bias_detector import BiasDetector
         # Unequal group sizes: A has 90, B has 10.  Rates A=0.5, B=0.9.

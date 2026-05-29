@@ -1217,34 +1217,147 @@ class BiasDetector:
         rates = list(group_selection_rates.values())
         return float(max(rates) - min(rates))
 
+    @staticmethod
+    def _wilson_interval(selected: int, total: int,
+                         z: float = 1.96) -> tuple:
+        """Two-sided Wilson score confidence interval for a binomial
+        proportion.  At z=1.96 -> 95% CI.
+
+        Wilson is preferred over normal-approximation Wald because it
+        stays inside [0, 1] and is well-behaved at extreme rates and
+        small sample sizes — exactly the regime AIR audits live in.
+
+        Returns (lower, upper) both clipped to [0, 1].
+        """
+        if total <= 0:
+            return (0.0, 0.0)
+        p = selected / total
+        n = total
+        denom = 1 + z * z / n
+        centre = (p + z * z / (2 * n)) / denom
+        margin = (z * np.sqrt(p * (1 - p) / n + z * z / (4 * n * n))) / denom
+        return (max(0.0, centre - margin), min(1.0, centre + margin))
+
     def adverse_impact_ratio(
         self,
         group_a_selected: int,
         group_a_total: int,
         group_b_selected: int,
         group_b_total: int,
+        protected_group: Optional[str] = None,
+        group_a_name: str = "a",
+        group_b_name: str = "b",
     ) -> dict:
-        """
-        Compute Adverse Impact Ratio (4/5 Rule).
-        AIR = selection_rate_minority / selection_rate_majority.
-        AIR < 0.8 may indicate adverse impact.
+        """Compute Adverse Impact Ratio with directional + symmetric views.
+
+        The classic EEOC 4/5 rule is DIRECTIONAL:
+            AIR = selection_rate_protected / selection_rate_reference
+        with the "protected" group being the one that historically
+        faced discrimination (or the one with lower selection rate
+        in the audit if no prior protected designation is given).
+
+        Args:
+            group_a_selected, group_a_total: counts for group A
+            group_b_selected, group_b_total: counts for group B
+            protected_group: one of group_a_name or group_b_name to
+                designate as protected.  When None we auto-pick the
+                group with the lower selection rate (the conservative
+                "find the disadvantaged group" interpretation).
+            group_a_name, group_b_name: human-readable labels.
+
+        Returns a dict with BOTH views:
+
+          group_*_rate, group_*_count, group_*_total, group_*_wilson_ci
+            Descriptive per-group stats, including the Wilson 95% CI
+            on the selection rate.
+
+          protected_group, reference_group     Names of the two roles.
+          directional_air = sel_protected / sel_reference
+            One-directional AIR — < 1 means protected group is
+            disadvantaged.  THIS is the EEOC-style number.
+          adverse_impact_ratio_symmetric = min(rates) / max(rates)
+            Symmetric form retained for backwards compat (this is
+            what the prior implementation returned).
+          adverse_impact_ratio
+            ALIAS for directional_air — this is the publish-ready
+            value going forward.
+          passes_4_5_rule
+            directional_air >= threshold (default 0.80).
+          risk_level                            LOW/MODERATE/HIGH/CRITICAL
+          air_lower_ci, air_upper_ci
+            Wilson-based interval on the AIR ratio computed by
+            propagating each rate's CI through the ratio (uses the
+            conservative endpoint combinations).
         """
         rate_a = group_a_selected / group_a_total if group_a_total > 0 else 0.0
         rate_b = group_b_selected / group_b_total if group_b_total > 0 else 0.0
+        ci_a   = BiasDetector._wilson_interval(group_a_selected, group_a_total)
+        ci_b   = BiasDetector._wilson_interval(group_b_selected, group_b_total)
 
+        # Symmetric AIR (legacy)
         if rate_a == 0 and rate_b == 0:
-            air = 1.0
+            air_sym = 1.0
         elif max(rate_a, rate_b) == 0:
-            air = 0.0
+            air_sym = 0.0
         else:
-            air = min(rate_a, rate_b) / max(rate_a, rate_b)
+            air_sym = min(rate_a, rate_b) / max(rate_a, rate_b)
+
+        # Pick protected group
+        if protected_group is None:
+            protected = group_a_name if rate_a <= rate_b else group_b_name
+        elif protected_group in (group_a_name, group_b_name):
+            protected = protected_group
+        else:
+            protected = group_a_name if rate_a <= rate_b else group_b_name
+        reference = group_b_name if protected == group_a_name else group_a_name
+
+        sel_protected = rate_a if protected == group_a_name else rate_b
+        sel_reference = rate_b if protected == group_a_name else rate_a
+
+        if sel_reference == 0:
+            air_dir = 1.0 if sel_protected == 0 else float("inf")
+        else:
+            air_dir = sel_protected / sel_reference
+        # Clip infinity for downstream JSON serialisation.
+        if air_dir == float("inf"):
+            air_dir = 999.0
+
+        # CI propagation: AIR = p_prot / p_ref.  Conservative interval:
+        # lower = (lower bound of protected) / (upper bound of reference)
+        # upper = (upper bound of protected) / (lower bound of reference)
+        ci_protected = ci_a if protected == group_a_name else ci_b
+        ci_reference = ci_b if protected == group_a_name else ci_a
+        if ci_reference[1] > 0:
+            air_lower = ci_protected[0] / ci_reference[1]
+        else:
+            air_lower = 0.0
+        if ci_reference[0] > 0:
+            air_upper = ci_protected[1] / ci_reference[0]
+        else:
+            air_upper = 999.0
 
         return {
-            "group_a_rate": round(rate_a, 4),
-            "group_b_rate": round(rate_b, 4),
-            "adverse_impact_ratio": round(air, 4),
-            "passes_4_5_rule": air >= self.adverse_impact_threshold,
-            "risk_level": self._risk_level(air),
+            f"{group_a_name}_rate":      round(rate_a, 4),
+            f"{group_b_name}_rate":      round(rate_b, 4),
+            f"{group_a_name}_count":     int(group_a_selected),
+            f"{group_b_name}_count":     int(group_b_selected),
+            f"{group_a_name}_total":     int(group_a_total),
+            f"{group_b_name}_total":     int(group_b_total),
+            f"{group_a_name}_wilson_ci": (round(ci_a[0], 4), round(ci_a[1], 4)),
+            f"{group_b_name}_wilson_ci": (round(ci_b[0], 4), round(ci_b[1], 4)),
+            # Legacy keys preserved
+            "group_a_rate":                  round(rate_a, 4),
+            "group_b_rate":                  round(rate_b, 4),
+            "adverse_impact_ratio_symmetric": round(air_sym, 4),
+            # New directional answer
+            "protected_group":               protected,
+            "reference_group":               reference,
+            "directional_air":               round(air_dir, 4),
+            "adverse_impact_ratio":          round(air_dir, 4),
+            "passes_4_5_rule":               air_dir >= self.adverse_impact_threshold,
+            "risk_level":                    self._risk_level(air_dir),
+            "air_lower_ci":                  round(air_lower, 4),
+            "air_upper_ci":                  round(min(air_upper, 999.0), 4),
         }
 
     @staticmethod
@@ -1655,6 +1768,8 @@ class BiasDetector:
                 group_a_total=len(male_data),
                 group_b_selected=sum(1 for r in female_data if r["selected"]),
                 group_b_total=len(female_data),
+                group_a_name="male",
+                group_b_name="female",
             )
             air_soft = self._air_soft(candidate_records)
             conservative = min(
