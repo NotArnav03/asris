@@ -613,6 +613,57 @@ _CALIBRATION_ECE_COVERAGE_FLOOR: float  = 0.50
 # can investigate why so many resumes failed detection.
 _DETECTION_COVERAGE_FLOOR: float = 0.50
 
+# --- Deduplication ---------------------------------------------------------
+# Default Hamming-distance threshold for SimHash near-duplicate detection.
+# A 64-bit SimHash with Hamming distance <= 3 means the two documents share
+# at least ~95% of their content fingerprint — close enough that we treat
+# them as the same submission for the purposes of AIR computation.
+# Submit-the-same-resume-100-times is the explicit attack vector this
+# closes (was task #8 in the original review).
+_SIMHASH_BITS: int = 64
+_NEAR_DUPLICATE_HAMMING_THRESHOLD: int = 3
+# Fraction of input that being a duplicate trips a ballot-stuffing alert.
+# At 20% dedup rate the AIR numerator could be doubled by one bad actor.
+_BALLOT_STUFFING_THRESHOLD: float = 0.20
+
+
+def _simhash(text: str, bits: int = _SIMHASH_BITS) -> int:
+    """Charikar SimHash fingerprint for near-duplicate detection.
+
+    Tokens are alphabetic word-grams from the lower-cased text.  Each
+    token's SHA-256 hash contributes +freq to each set bit position
+    and -freq to each unset bit position.  The final fingerprint has
+    bit i = 1 iff the accumulator at position i is positive.
+
+    Two documents with Hamming distance <= ``_NEAR_DUPLICATE_HAMMING_THRESHOLD``
+    are considered near-duplicates.  Default 64 bits with threshold 3
+    is the canonical Charikar configuration.
+    """
+    import hashlib
+    from collections import Counter
+    tokens = re.findall(r"\w+", text.lower())
+    if not tokens:
+        return 0
+    counter = Counter(tokens)
+    v = [0] * bits
+    for token, freq in counter.items():
+        h = int(hashlib.sha256(token.encode("utf-8")).hexdigest(), 16)
+        for i in range(bits):
+            if (h >> i) & 1:
+                v[i] += freq
+            else:
+                v[i] -= freq
+    fingerprint = 0
+    for i in range(bits):
+        if v[i] > 0:
+            fingerprint |= 1 << i
+    return fingerprint
+
+
+def _hamming_distance(a: int, b: int) -> int:
+    """Number of differing bits in two integers' binary representations."""
+    return bin(a ^ b).count("1")
+
 
 # --- Model card cache for per-culture ECE disclosure ----------------------
 # Loaded once and reused across audits.  Returns {} when the card file is
@@ -1435,6 +1486,8 @@ class BiasDetector:
         cutoff_method: str = "median",
         top_k: Optional[int] = None,
         percentile: Optional[float] = None,
+        dedup: bool = True,
+        near_dup_hamming: int = _NEAR_DUPLICATE_HAMMING_THRESHOLD,
         scorer=None,
         jd_text: Optional[str] = None,
         counterfactual_sample_size: int = 10,
@@ -1461,6 +1514,77 @@ class BiasDetector:
                 candidate triggers 16 scorer calls (8 male + 8 female
                 name swaps); the harness is cheap but not free.
         """
+        # --- Pre-step: deduplication -----------------------------------
+        # Drop exact duplicate resume bodies (SHA-256 of normalised text)
+        # AND near-duplicates (SimHash Hamming <= near_dup_hamming).
+        # Without this, the same resume submitted 100 times inflates
+        # one group's denominator and the AIR "pass" verdict.  This is
+        # the explicit attack vector closed by task #8.
+        dedup_report: dict = {
+            "applied":              dedup,
+            "input_resumes":        len(resume_texts),
+            "exact_duplicate_sets": 0,
+            "exact_dropped":        0,
+            "near_duplicate_pairs": 0,
+            "kept":                 len(resume_texts),
+            "ballot_stuffing_alert": False,
+        }
+        if dedup and resume_texts:
+            import hashlib
+            from collections import defaultdict as _dd
+
+            # Exact dedup by SHA-256 of normalised (whitespace-collapsed) text.
+            hash_to_files: dict = _dd(list)
+            for fn, text in resume_texts.items():
+                norm = " ".join((text or "").split()).lower()
+                h = hashlib.sha256(norm.encode("utf-8")).hexdigest()
+                hash_to_files[h].append(fn)
+            kept_filenames: set = set()
+            exact_dropped = 0
+            exact_dup_sets = 0
+            for files in hash_to_files.values():
+                kept_filenames.add(files[0])
+                if len(files) > 1:
+                    exact_dup_sets += 1
+                    exact_dropped += len(files) - 1
+
+            # Near-dup SimHash pass on the kept-after-exact set.
+            kept_list = list(kept_filenames)
+            simhashes = {fn: _simhash(resume_texts[fn]) for fn in kept_list}
+            near_pairs: list = []
+            survivors = set(kept_list)
+            for i, fn_i in enumerate(kept_list):
+                if fn_i not in survivors:
+                    continue
+                for fn_j in kept_list[i + 1:]:
+                    if fn_j not in survivors:
+                        continue
+                    if _hamming_distance(
+                        simhashes[fn_i], simhashes[fn_j]
+                    ) <= near_dup_hamming:
+                        near_pairs.append((fn_i, fn_j))
+                        survivors.discard(fn_j)
+
+            new_resume_texts = {
+                fn: resume_texts[fn]
+                for fn in kept_list if fn in survivors
+            }
+            new_scores = {fn: scores[fn] for fn in new_resume_texts if fn in scores}
+            dropped_total = len(resume_texts) - len(new_resume_texts)
+            ballot_stuffing = (
+                dropped_total / max(len(resume_texts), 1)
+                >= _BALLOT_STUFFING_THRESHOLD
+            )
+            dedup_report.update({
+                "exact_duplicate_sets": exact_dup_sets,
+                "exact_dropped":        exact_dropped,
+                "near_duplicate_pairs": len(near_pairs),
+                "kept":                 len(new_resume_texts),
+                "ballot_stuffing_alert": ballot_stuffing,
+            })
+            resume_texts = new_resume_texts
+            scores = new_scores
+
         # --- Cutoff resolution -----------------------------------------
         # The recruiter's OPERATIONAL cutoff governs whose "selected"
         # status the audit measures.  Four supported modes:
@@ -1628,6 +1752,7 @@ class BiasDetector:
             "cutoff_threshold":   selection_threshold,
             "cutoff_top_k":       cutoff_top_k,
             "cutoff_percentile":  cutoff_percentile,
+            "dedup":              dedup_report,
             "total_resumes": len(scores),
             "gender_distribution": {},
             "gender_bias_analysis": {},
@@ -1649,6 +1774,19 @@ class BiasDetector:
             },
             "recommendations": [],
         }
+
+        if dedup_report["ballot_stuffing_alert"]:
+            dropped = (
+                dedup_report["exact_dropped"]
+                + dedup_report["near_duplicate_pairs"]
+            )
+            results["recommendations"].append(
+                f"[SUSPECT] {dropped}/{dedup_report['input_resumes']} "
+                f"resumes were duplicates of each other "
+                f"({100 * dropped / max(dedup_report['input_resumes'], 1):.0f}%). "
+                f"This may be ballot-stuffing — inspect "
+                f"audit['dedup'] for the affected sets."
+            )
 
         if _integrity_violated:
             results["recommendations"].append(

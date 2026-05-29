@@ -1415,6 +1415,66 @@ class TestBiasDetector:
 
     # --- Cutoff method decoupling (Task #7 / #42) ----------------------
 
+    # --- Dedup (Task #8 / #43) ----------------------------------------
+
+    def test_audit_drops_exact_duplicate_resumes(self):
+        from fairness.bias_detector import BiasDetector
+        body = "Priya Sharma\nML Engineer with 5 years experience"
+        # Submit the same body 5 times with different filenames + scores
+        texts = {f"r{i}.txt": body for i in range(5)}
+        scores = {f"r{i}.txt": 0.5 + i * 0.05 for i in range(5)}
+        audit = BiasDetector().audit_ranking_bias(texts, scores)
+        d = audit["dedup"]
+        assert d["applied"] is True
+        assert d["input_resumes"] == 5
+        assert d["exact_dropped"] == 4
+        assert d["kept"] == 1
+
+    def test_audit_flags_ballot_stuffing_when_dedup_rate_high(self):
+        from fairness.bias_detector import BiasDetector
+        # 5 copies of one body + 1 unique -> 4/6 = 67% dedup
+        body = "Priya Sharma\nEngineer with 5 years"
+        texts = {f"r{i}.txt": body for i in range(5)}
+        texts["unique.txt"] = "John Smith\nDeveloper"
+        scores = {k: 0.5 for k in texts}
+        audit = BiasDetector().audit_ranking_bias(texts, scores)
+        assert audit["dedup"]["ballot_stuffing_alert"] is True
+        assert any("ballot-stuffing" in r.lower()
+                   for r in audit["recommendations"])
+
+    def test_audit_detects_near_duplicates_via_simhash(self):
+        from fairness.bias_detector import BiasDetector
+        # Two near-identical bodies (one word changed).
+        body_a = (
+            "Priya Sharma\nML Engineer with 5 years of experience "
+            "building recommender systems at TechCorp using Python "
+            "and TensorFlow.\nMSc Computer Science."
+        )
+        body_b = (
+            "Priya Sharma\nML Engineer with 5 years of experience "
+            "building recommender systems at GlobalCorp using Python "
+            "and TensorFlow.\nMSc Computer Science."
+        )
+        texts = {"a.txt": body_a, "b.txt": body_b, "c.txt": "John\nDev"}
+        scores = {"a.txt": 0.5, "b.txt": 0.6, "c.txt": 0.7}
+        audit = BiasDetector().audit_ranking_bias(
+            texts, scores, near_dup_hamming=8,  # looser threshold
+        )
+        d = audit["dedup"]
+        assert d["near_duplicate_pairs"] >= 1
+
+    def test_audit_dedup_disable_keeps_all_resumes(self):
+        from fairness.bias_detector import BiasDetector
+        body = "Priya Sharma\nEngineer"
+        texts = {f"r{i}.txt": body for i in range(3)}
+        scores = {f"r{i}.txt": 0.5 for i in range(3)}
+        audit = BiasDetector().audit_ranking_bias(
+            texts, scores, dedup=False,
+        )
+        assert audit["dedup"]["applied"] is False
+        assert audit["dedup"]["exact_dropped"] == 0
+
+
     def test_cutoff_method_median_is_default(self):
         from fairness.bias_detector import BiasDetector
         audit = BiasDetector().audit_ranking_bias(
