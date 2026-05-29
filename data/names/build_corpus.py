@@ -52,7 +52,7 @@ from collections import defaultdict
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
 
-from fairness.bias_detector import GENDERED_NAMES, _UNISEX_NAMES  # noqa: E402
+from fairness.names.seed_lists import GENDERED_NAMES, _UNISEX_NAMES  # noqa: E402
 
 
 RAW_CSV = ROOT / "data" / "names" / "firstnames_raw.csv"
