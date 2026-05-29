@@ -1182,6 +1182,8 @@ class BiasDetector:
         scorer=None,
         jd_text: Optional[str] = None,
         counterfactual_sample_size: int = 10,
+        audit_log_path: Optional[Path] = None,
+        write_baseline: bool = False,
     ) -> dict:
         """Comprehensive bias audit across detected demographic groups.
 
@@ -1577,6 +1579,106 @@ class BiasDetector:
         # run the name-swap harness on each, then aggregate.  This is
         # what closes the "we built the harness but never used it
         # automatically" gap.
+        # --- Historical drift detection (audit log) ---------------------
+        # Optional baseline-comparison block.  When audit_log_path is
+        # given AND the file already exists with at least one prior
+        # record, we compare the current weighted_ece / AIR against
+        # the LAST recorded baseline and surface the deltas.  When
+        # write_baseline=True we append the current run to the log.
+        if audit_log_path is not None:
+            import json
+            from datetime import datetime, timezone
+            log_p = Path(audit_log_path)
+            if log_p.exists():
+                try:
+                    last_line = None
+                    with log_p.open(encoding="utf-8") as fh:
+                        for line in fh:
+                            if line.strip():
+                                last_line = line
+                    if last_line:
+                        baseline = json.loads(last_line)
+                        cur_ece = results["calibration_drift"].get("weighted_ece")
+                        baseline_ece = baseline.get("weighted_ece")
+                        cur_air = None
+                        baseline_air = baseline.get("adverse_impact_ratio")
+                        if results.get("gender_bias_analysis"):
+                            cur_air = results["gender_bias_analysis"].get(
+                                "adverse_impact_ratio"
+                            )
+                        ece_delta = (
+                            None if cur_ece is None or baseline_ece is None
+                            else round(cur_ece - baseline_ece, 4)
+                        )
+                        air_delta = (
+                            None if cur_air is None or baseline_air is None
+                            else round(cur_air - baseline_air, 4)
+                        )
+                        results["drift_since_baseline"] = {
+                            "baseline_timestamp":   baseline.get("timestamp"),
+                            "baseline_weighted_ece": baseline_ece,
+                            "current_weighted_ece":  cur_ece,
+                            "weighted_ece_delta":    ece_delta,
+                            "baseline_air":          baseline_air,
+                            "current_air":           cur_air,
+                            "air_delta":             air_delta,
+                        }
+                        # Material drift trips a recommendation.  Tunable
+                        # via the constants but the defaults are
+                        # conservative — small per-audit fluctuations
+                        # shouldn't fire.
+                        if (ece_delta is not None and abs(ece_delta) > 0.02):
+                            results["recommendations"].append(
+                                f"[DRIFT] Weighted ECE changed by "
+                                f"{ece_delta:+.4f} since baseline "
+                                f"({baseline.get('timestamp')}).  "
+                                f"Audited corpus composition may have "
+                                f"shifted; review culture_distribution."
+                            )
+                        if (air_delta is not None and abs(air_delta) > 0.05):
+                            results["recommendations"].append(
+                                f"[DRIFT] AIR changed by {air_delta:+.4f} "
+                                f"since baseline.  Investigate whether "
+                                f"the ranker behaviour or candidate mix "
+                                f"changed materially."
+                            )
+                except Exception:
+                    pass
+
+            if write_baseline:
+                try:
+                    record = {
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "n_resumes": len(scores),
+                        "weighted_ece": results["calibration_drift"].get(
+                            "weighted_ece"
+                        ),
+                        "ece_coverage": results["calibration_drift"].get(
+                            "ece_coverage"
+                        ),
+                        "adverse_impact_ratio": (
+                            results.get("gender_bias_analysis", {}).get(
+                                "adverse_impact_ratio"
+                            )
+                        ),
+                        "verdict": (
+                            results.get("gender_bias_analysis", {}).get(
+                                "verdict"
+                            )
+                        ),
+                        "culture_distribution": {
+                            c: stats["count"]
+                            for c, stats in results.get(
+                                "culture_distribution", {}
+                            ).items()
+                        },
+                    }
+                    log_p.parent.mkdir(parents=True, exist_ok=True)
+                    with log_p.open("a", encoding="utf-8") as fh:
+                        fh.write(json.dumps(record) + "\n")
+                except Exception:
+                    pass
+
         if scorer is not None and jd_text is not None and resume_texts:
             from evaluation.counterfactual_robustness import (
                 name_swap_robustness,

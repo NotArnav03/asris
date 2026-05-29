@@ -1333,6 +1333,53 @@ class TestBiasDetector:
         )
         assert "counterfactual_robustness" not in audit
 
+    # --- Historical drift baseline (Task #34) -------------------------
+
+    def test_audit_writes_baseline_when_requested(self, tmp_path):
+        from fairness.bias_detector import BiasDetector
+        log = tmp_path / "audit.jsonl"
+        BiasDetector().audit_ranking_bias(
+            {"p.txt": "Priya Sharma\nEng", "j.txt": "John Smith\nEng"},
+            {"p.txt": 0.9, "j.txt": 0.8},
+            audit_log_path=log, write_baseline=True,
+        )
+        assert log.exists()
+        import json
+        records = [json.loads(line) for line in log.read_text().splitlines()]
+        assert len(records) == 1
+        for key in ("timestamp", "n_resumes", "weighted_ece",
+                    "ece_coverage", "adverse_impact_ratio", "verdict"):
+            assert key in records[0]
+
+    def test_second_audit_surfaces_drift_block(self, tmp_path):
+        from fairness.bias_detector import BiasDetector
+        log = tmp_path / "audit.jsonl"
+        det = BiasDetector()
+        det.audit_ranking_bias(
+            {"p.txt": "Priya Sharma\nEng", "j.txt": "John Smith\nEng"},
+            {"p.txt": 0.9, "j.txt": 0.8},
+            audit_log_path=log, write_baseline=True,
+        )
+        audit2 = det.audit_ranking_bias(
+            {"p.txt": "Priya Sharma\nEng", "j.txt": "John Smith\nEng"},
+            {"p.txt": 0.9, "j.txt": 0.8},
+            audit_log_path=log,
+        )
+        assert "drift_since_baseline" in audit2
+        d = audit2["drift_since_baseline"]
+        for key in ("baseline_timestamp", "baseline_weighted_ece",
+                    "current_weighted_ece", "weighted_ece_delta",
+                    "baseline_air", "current_air", "air_delta"):
+            assert key in d
+
+    def test_drift_block_absent_when_no_log_path(self):
+        from fairness.bias_detector import BiasDetector
+        audit = BiasDetector().audit_ranking_bias(
+            {"a.txt": "John\nEng"}, {"a.txt": 0.5},
+        )
+        assert "drift_since_baseline" not in audit
+
+
     def test_audit_skips_counterfactual_when_no_jd_text(self):
         from fairness.bias_detector import BiasDetector
         audit = BiasDetector().audit_ranking_bias(
