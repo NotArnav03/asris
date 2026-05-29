@@ -370,6 +370,94 @@ class TestBiasDetector:
         )
         assert result["signals"]["female_title"] is True
 
+    # --- Unicode-aware honorifics (Task #18) ---------------------------
+
+    def test_ms_maria_with_accent_fires_female_title(self):
+        # Previously: [A-Z][A-Za-z'\-]+ rejected the accented "M" of
+        # "María" so "Ms. María" silently failed to fire.
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "Ms. María Fernández\nProduct Manager"
+        )
+        assert r["signals"]["female_title"] is True
+
+    def test_mr_soren_nordic_letter_fires(self):
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "Mr. Søren Jensen\nBackend Engineer"
+        )
+        assert r["signals"]["male_title"] is True
+
+    def test_dr_muller_german_umlaut_fires(self):
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "Dr. Müller\nResearch Director"
+        )
+        assert r["signals"]["neutral_title"] is True
+
+    def test_senora_lopez_spanish_honorific_fires(self):
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "Señora López\nMarketing Lead"
+        )
+        assert r["signals"]["female_title"] is True
+
+    def test_frau_schmidt_german_honorific_fires(self):
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "Frau Schmidt\nLawyer"
+        )
+        assert r["signals"]["female_title"] is True
+
+    def test_herr_meyer_german_honorific_fires(self):
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "Herr Meyer\nFinancial Analyst"
+        )
+        assert r["signals"]["male_title"] is True
+
+    def test_madame_dupont_french_honorific_fires(self):
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "Madame Dupont\nDirector"
+        )
+        assert r["signals"]["female_title"] is True
+
+    def test_monsieur_dupont_french_honorific_fires(self):
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "Monsieur Dupont\nDirector"
+        )
+        assert r["signals"]["male_title"] is True
+
+    def test_reverend_neutral_honorific_fires(self):
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "Rev. Williams\nChaplain"
+        )
+        assert r["signals"]["neutral_title"] is True
+
+    def test_bare_M_initial_does_not_fire_male_title(self):
+        # "John M Smith" — M is a middle initial, not a honorific.
+        # The bare "M" honorific was deliberately excluded; this test
+        # guards against re-adding it.
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "John M Smith\nEngineer"
+        )
+        assert r["signals"]["male_title"] is False
+
+    def test_doe_Sr_suffix_does_not_fire_male_title(self):
+        # "John Doe Sr." — Sr is the English suffix for Senior, not
+        # the Spanish honorific.  Guard against the false positive.
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "John Doe Sr.\nProfessor"
+        )
+        # The neutral_title check still fires on "Professor" if it
+        # follows a recognised honorific; but Sr should not vote male.
+        assert r["signals"]["male_title"] is False
+
     def test_ms_oneill_apostrophe_name_fires(self):
         from fairness.bias_detector import BiasDetector
         result = BiasDetector.detect_gender_proxy_scored(

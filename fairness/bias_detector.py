@@ -100,38 +100,89 @@ _HONORIFIC_DENYLIST: frozenset = frozenset({
 def _build_honorific_pattern(tokens: list) -> re.Pattern:
     """Compile a strict honorific pattern.
 
-    The honorific itself is matched case-insensitively (scoped flag), but
-    the follow-on word MUST start with an uppercase letter and contain
-    only name-like characters (letters, apostrophes, hyphens).  This is
-    the primary defence against "MS in CS" / "MR-aware" style strings.
-    The denylist (`_HONORIFIC_DENYLIST`) is the secondary defence against
-    the residual case where the follow-on word is Title-cased but not a
-    name ("MS Office").
+    The honorific itself is matched case-insensitively (scoped flag).
+    The follow-on capture group matches any Unicode word characters
+    plus apostrophe and hyphen — `\\w[\\w'\\-]+` — which gives us at
+    least two characters total and admits accented letters needed for
+    names like "María", "Søren", "Müller", "Łukasz".  The follow-on's
+    *first character* is then checked for ``isupper()`` in Python
+    (Unicode-aware), and the lower-cased token is filtered against
+    _HONORIFIC_DENYLIST.
+
+    Why post-filter rather than encode "uppercase Unicode letter" in
+    the regex?  Python's stdlib ``re`` has no \\p{Lu} property class.
+    Enumerating Unicode uppercase ranges in a character class is
+    error-prone (~600 codepoints across many ranges), so the cleanest
+    correct implementation is regex-match + Python attribute check.
     """
     alts = "|".join(f"(?i:{re.escape(t)})" for t in tokens)
-    # Optional period, then whitespace, then a Title-cased name token.
-    # Apostrophes and hyphens are permitted to support "O'Neill", "Smith-Jones".
-    return re.compile(rf"\b(?:{alts})\.?\s+([A-Z][A-Za-z'\-]+)")
+    # Optional period, then whitespace, then a Unicode word token of
+    # length >= 2 (apostrophes and hyphens permitted to support
+    # "O'Neill", "Smith-Jones").  The first-letter-uppercase
+    # requirement is enforced in _honorific_fires.
+    return re.compile(rf"\b(?:{alts})\.?\s+(\w[\w'\-]+)")
 
 
+# Honorifics by gender.  Each list mixes English with the most common
+# international forms encountered on multi-cultural resumes:
+#   Spanish/Portuguese  Señor / Señora / Senor / Senora
+#   French              Monsieur / Madame / Mme / Mlle / Maître
+#   German              Herr / Frau
+#   Italian             Signor / Signora
+#   Religious/honorary  Rev / Reverend / Hon
+# Accented and ASCII-fallback spellings are both listed so the audit
+# works whether or not upstream text normalisation has stripped
+# diacritics.
 _HONORIFIC_PATTERNS: dict = {
-    "male":    _build_honorific_pattern(["Mr", "Mister", "Sir"]),
-    "female":  _build_honorific_pattern(["Mrs", "Ms", "Miss", "Madam"]),
-    "neutral": _build_honorific_pattern(["Dr", "Prof", "Professor", "Mx"]),
+    "male": _build_honorific_pattern([
+        "Mr", "Mister", "Sir",
+        "Señor", "Senor",       # Spanish/Portuguese
+        "Herr",                 # German
+        "Monsieur",             # French
+        "Signor",               # Italian
+        # NOTE: bare abbreviations "Sr", "Sr.", "M", "M." are
+        # deliberately EXCLUDED — they collide with the English
+        # suffix "Sr." (Senior) in "John Doe Sr." and the middle
+        # initial "M" in "John M Smith".  Full forms only.
+    ]),
+    "female": _build_honorific_pattern([
+        "Mrs", "Ms", "Miss", "Madam",
+        "Madame", "Mme", "Mlle",            # French
+        "Señora", "Senora",                 # Spanish/Portuguese
+        "Frau",                             # German
+        "Signora",                          # Italian
+        # NOTE: "Sra", "Sra." excluded for the same reason as the
+        # male side — abbreviation collisions outweigh coverage gain.
+    ]),
+    "neutral": _build_honorific_pattern([
+        "Dr", "Prof", "Professor", "Mx",
+        "Rev", "Reverend", "Hon", "Honorable",  # religious / honorary
+        "Maître", "Maitre",                     # French legal/academic
+    ]),
 }
 
 
 def _honorific_fires(pattern: re.Pattern, header_orig: str) -> bool:
     """Return True iff ``pattern`` matches inside ``header_orig`` with a
-    follow-on token that is not on the denylist.
+    follow-on token that (a) has an uppercase first character (Unicode-
+    aware via ``str.isupper``), (b) contains no digits, and (c) is not
+    on _HONORIFIC_DENYLIST.
 
     ``header_orig`` MUST preserve the resume's original case — lowercasing
     the input collapses "MS Office" (false positive) onto "Ms. Officer"
-    (true positive) and defeats the strict-case capture group.
+    (true positive) and defeats the uppercase-first-letter check.
     """
     for m in pattern.finditer(header_orig):
         follow = m.group(1)
         if not follow:
+            continue
+        # First-character check — Unicode-aware, catches "María", "Søren",
+        # "Müller" while rejecting lowercase glue and digit-led tokens.
+        if not follow[0].isupper():
+            continue
+        # Reject tokens with digits ("Mr. 1Smith" — almost certainly
+        # spurious; legitimate names do not contain digits).
+        if any(ch.isdigit() for ch in follow):
             continue
         clean = follow.rstrip(".,;:!?").lower()
         if clean and clean not in _HONORIFIC_DENYLIST:
