@@ -1176,18 +1176,32 @@ class BiasDetector:
 
     def audit_ranking_bias(
         self,
-        resume_texts: dict[str, str],
-        scores: dict[str, float],
+        resume_texts: dict,
+        scores: dict,
         selection_threshold: Optional[float] = None,
+        scorer=None,
+        jd_text: Optional[str] = None,
+        counterfactual_sample_size: int = 10,
     ) -> dict:
-        """
-        Comprehensive bias audit across detected demographic groups.
+        """Comprehensive bias audit across detected demographic groups.
 
         Args:
             resume_texts: {resume_filename: text}
             scores: {resume_filename: ranking_score}
             selection_threshold: Score threshold for selected vs not selected.
                                  If None, uses the median score.
+            scorer: Optional callable ``scorer(jd, resume) -> float`` —
+                if provided alongside jd_text, the audit additionally
+                runs the counterfactual name-swap robustness harness on
+                a sample of candidates and surfaces the result under
+                audit["counterfactual_robustness"].  See
+                evaluation/counterfactual_robustness.py.
+            jd_text: Job-description text required when ``scorer`` is
+                provided.  Without it the counterfactual check cannot run.
+            counterfactual_sample_size: Number of candidates to sample
+                for the counterfactual check (default 10).  Each sampled
+                candidate triggers 16 scorer calls (8 male + 8 female
+                name swaps); the harness is cheap but not free.
         """
         if selection_threshold is None:
             selection_threshold = float(np.median(list(scores.values())))
@@ -1556,6 +1570,51 @@ class BiasDetector:
                 f"[NOTE] {n_unknown}/{n_known + n_unknown} resumes had undetectable "
                 f"gender proxies. Interpret AIR with caution."
             )
+
+        # --- Counterfactual robustness on the SCORER itself --------------
+        # Audit-time integration of evaluation/counterfactual_robustness.py.
+        # When a scorer (and JD) are provided we sample candidates and
+        # run the name-swap harness on each, then aggregate.  This is
+        # what closes the "we built the harness but never used it
+        # automatically" gap.
+        if scorer is not None and jd_text is not None and resume_texts:
+            from evaluation.counterfactual_robustness import (
+                name_swap_robustness,
+            )
+            sampled = list(resume_texts.items())[:counterfactual_sample_size]
+            reports: list = []
+            for _, body in sampled:
+                try:
+                    rep = name_swap_robustness(
+                        scorer=scorer, jd=jd_text, base_resume=body,
+                    )
+                except Exception:
+                    continue
+                if rep.male_scores and rep.female_scores:
+                    reports.append(rep)
+
+            if reports:
+                gaps = [r.score_gap for r in reports]
+                deltas = [r.max_swap_delta for r in reports]
+                mean_gap = sum(gaps) / len(gaps)
+                max_swap = max(deltas)
+                n_robust = sum(1 for r in reports if r.robust)
+                results["counterfactual_robustness"] = {
+                    "n_sampled":              len(reports),
+                    "mean_score_gap":         round(mean_gap, 4),
+                    "max_swap_delta":         round(max_swap, 4),
+                    "fraction_robust":        round(n_robust / len(reports), 4),
+                    "all_robust":             n_robust == len(reports),
+                }
+                if n_robust < len(reports):
+                    results["recommendations"].append(
+                        f"[FAIRNESS] Counterfactual robustness audit "
+                        f"FAILED on {len(reports) - n_robust}/{len(reports)} "
+                        f"sampled candidates.  Mean name-swap score gap = "
+                        f"{mean_gap:.4f}, max single-swap delta = "
+                        f"{max_swap:.4f}.  The scorer is sensitive to "
+                        f"the candidate's NAME, not just their content."
+                    )
 
         return results
 

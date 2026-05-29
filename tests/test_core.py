@@ -1281,6 +1281,68 @@ class TestBiasDetector:
             bd._MODEL_CARD_ECE_CACHE = None
 
 
+    # --- Counterfactual robustness inside audit (Task #33) -------------
+
+    def test_audit_runs_counterfactual_when_scorer_provided(self):
+        from fairness.bias_detector import BiasDetector
+        texts = {
+            "p.txt": "Priya Sharma\nEngineer with 5 years",
+            "j.txt": "John Smith\nEngineer with 5 years",
+        }
+        scores = {"p.txt": 0.9, "j.txt": 0.8}
+        audit = BiasDetector().audit_ranking_bias(
+            texts, scores,
+            scorer=lambda jd, res: 0.7,   # clean: same score for all
+            jd_text="Senior Python role",
+        )
+        assert "counterfactual_robustness" in audit
+        cf = audit["counterfactual_robustness"]
+        assert cf["all_robust"] is True
+        assert cf["mean_score_gap"] == 0.0
+
+    def test_audit_counterfactual_flags_biased_scorer(self):
+        from fairness.bias_detector import BiasDetector
+        texts = {
+            "p.txt": "Priya Sharma\nEngineer with 5 years",
+            "j.txt": "John Smith\nEngineer with 5 years",
+        }
+        scores = {"p.txt": 0.9, "j.txt": 0.8}
+        # Biased: scorer prefers any name in our male swap pool.
+        # All 8 male swap names trigger 0.9; female names trigger 0.5.
+        male_pool = {"john", "michael", "rahul", "vikram", "wei",
+                     "hiroshi", "mohammed", "omar"}
+
+        def biased(jd, res):
+            first = res.strip().split()[0].lower()
+            return 0.9 if first in male_pool else 0.5
+
+        audit = BiasDetector().audit_ranking_bias(
+            texts, scores, scorer=biased, jd_text="role",
+        )
+        cf = audit["counterfactual_robustness"]
+        assert cf["all_robust"] is False
+        # Gap of 0.4 (mean male 0.9, mean female 0.5) — way above
+        # the default 0.02 threshold.
+        assert cf["mean_score_gap"] > 0.3
+        assert any("counterfactual" in r.lower() for r in audit["recommendations"])
+
+    def test_audit_skips_counterfactual_when_no_scorer(self):
+        from fairness.bias_detector import BiasDetector
+        audit = BiasDetector().audit_ranking_bias(
+            {"a.txt": "John Smith\nEngineer"}, {"a.txt": 0.5},
+        )
+        assert "counterfactual_robustness" not in audit
+
+    def test_audit_skips_counterfactual_when_no_jd_text(self):
+        from fairness.bias_detector import BiasDetector
+        audit = BiasDetector().audit_ranking_bias(
+            {"a.txt": "John Smith\nEngineer"}, {"a.txt": 0.5},
+            scorer=lambda jd, res: 0.5,  # scorer without jd_text
+        )
+        # No jd_text -> no counterfactual block
+        assert "counterfactual_robustness" not in audit
+
+
     def test_audit_batched_path_matches_per_resume_path(self):
         # Calling detect_gender_proxy_scored standalone (per-resume
         # path) and via audit_ranking_bias (batched path) must produce
