@@ -509,6 +509,86 @@ class TestBiasDetector:
         assert r["signals"]["name_token"] == "priya"
         assert r["signals"]["female_name"] is True
 
+    # --- Adaptive header window (Task #27) -----------------------------
+
+    def test_padded_header_does_not_evade_honorific_scan(self):
+        # Attack: pad the resume with > 200 chars of fake address /
+        # contact info before the salutation.  The old text[:200]
+        # window cut off before "Mr. Smith" and the male_title signal
+        # silently failed.  The adaptive window scans up to 8 lines /
+        # 1000 chars so the salutation is now seen.
+        from fairness.bias_detector import BiasDetector
+        padding = (
+            "1234 Some Street\n"
+            "Apartment 567B, Building Complex C\n"
+            "Some Very Long City Name, Some State 99999\n"
+            "email-address-that-is-quite-long@example.com\n"
+            "Phone: +1-555-0100-extension-1234\n"
+            "Personal website: example.com/profile/very-long-handle\n"
+        )
+        assert len(padding) > 200
+        text = padding + "Mr. Smith\nSoftware Engineer"
+        r = BiasDetector.detect_gender_proxy_scored(text)
+        assert r["signals"]["male_title"] is True
+
+    def test_section_header_terminates_window(self):
+        # Body content under an EXPERIENCE section header must NOT
+        # be scanned for honorifics — a "Mr." appearing inside a
+        # job description is somebody ELSE's salutation, not the
+        # candidate's.
+        from fairness.bias_detector import BiasDetector
+        text = (
+            "Jane Doe\n"
+            "Data Scientist\n\n"
+            "EXPERIENCE\n"
+            "Reported to Mr. Anderson during my Q3 2024 rotation.\n"
+        )
+        r = BiasDetector.detect_gender_proxy_scored(text)
+        assert r["signals"]["male_title"] is False
+
+    def test_long_body_paragraph_terminates_window(self):
+        # A paragraph longer than the long-line cutoff means we've
+        # entered the body.  Subsequent honorifics belong there.
+        from fairness.bias_detector import BiasDetector
+        body_paragraph = "I am a senior engineer with " + "decades " * 40
+        assert len(body_paragraph) > 200
+        text = (
+            "Jane Doe\n"
+            + body_paragraph + "\n"
+            + "Mr. Anderson was my manager.\n"
+        )
+        r = BiasDetector.detect_gender_proxy_scored(text)
+        assert r["signals"]["male_title"] is False
+
+    def test_8_short_header_lines_all_scanned(self):
+        # All 8 short header lines should be in the window so a
+        # salutation in any of them fires.
+        from fairness.bias_detector import BiasDetector
+        text = (
+            "555-123-4567\n"
+            "contact@example.com\n"
+            "linkedin.com/in/example\n"
+            "github.com/example\n"
+            "City, State\n"
+            "Open to remote work\n"
+            "References available on request\n"
+            "Mr. Smith\n"
+            "Software Engineer\n"
+        )
+        r = BiasDetector.detect_gender_proxy_scored(text)
+        # 8th non-empty line is "Mr. Smith" — should fire.
+        assert r["signals"]["male_title"] is True
+
+    def test_normal_short_header_unaffected(self):
+        # Regression: typical short header still produces the same
+        # signal as before the adaptive-window change.
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "Mr. Smith\nSoftware Engineer with 8 years experience"
+        )
+        assert r["signals"]["male_title"] is True
+
+
     def test_plain_ascii_unaffected_by_sanitisation(self):
         # Regression: NFKC/zero-width strip is idempotent on ASCII.
         # If this fails the sanitisation has a bug that ALSO affects

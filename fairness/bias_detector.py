@@ -202,6 +202,72 @@ def _sanitise_for_detection(text: str) -> str:
     return text
 
 
+# Section headers commonly used in resumes — when one of these appears
+# we know the header window has ended and any honorific further down
+# is in the body, not the candidate's salutation.  Pattern is anchored
+# to start-of-line and matches case-insensitively.
+_SECTION_HEADER_RE = re.compile(
+    r"^\s*(EXPERIENCE|EDUCATION|SKILLS|SUMMARY|OBJECTIVE|PROFILE|"
+    r"CONTACT|PROJECTS|CERTIFICATIONS|AWARDS|PUBLICATIONS|"
+    r"REFERENCES|EMPLOYMENT|WORK\s+HISTORY|TECHNICAL\s+SKILLS|"
+    r"PROFESSIONAL\s+EXPERIENCE|EDUCATION\s+AND\s+TRAINING|"
+    r"LANGUAGES|INTERESTS|HOBBIES|ACCOMPLISHMENTS)\s*:?\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _extract_header_window(
+    text: str,
+    max_lines: int = 8,
+    max_chars: int = 1000,
+    long_line_cutoff: int = 200,
+) -> str:
+    """Adaptive header detection — replaces the previous ``text[:200]``
+    hard cap.
+
+    Scans line-by-line from the start, accumulating non-empty lines
+    until one of these terminates the window:
+
+      * ``max_lines`` non-empty lines have been collected (default 8)
+      * total character count reaches ``max_chars`` (default 1000)
+      * a line longer than ``long_line_cutoff`` chars (typical body
+        paragraph; default 200) is encountered
+      * a recognised section header (EXPERIENCE, EDUCATION, ...)
+        is encountered — anything after this is body content
+
+    Closes the "pad the resume with 250 chars of address before the
+    salutation to evade the 200-char honorific scan" bypass.  Real
+    headers fit comfortably inside 8 lines / 1000 chars; body content
+    triggers one of the terminating conditions.
+
+    Returns the joined header text (preserving newlines for the
+    section-header regex on downstream calls).
+    """
+    if not text:
+        return ""
+    kept: list = []
+    char_count = 0
+    line_count = 0
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            # Blank lines do not count against limits but are kept
+            # so multi-paragraph headers (address block then name)
+            # remain delimited.
+            kept.append(line)
+            continue
+        if _SECTION_HEADER_RE.match(stripped):
+            break
+        if len(line) > long_line_cutoff:
+            break
+        kept.append(line)
+        char_count += len(line) + 1
+        line_count += 1
+        if line_count >= max_lines or char_count >= max_chars:
+            break
+    return "\n".join(kept)
+
+
 def _honorific_fires(pattern: re.Pattern, header_orig: str) -> bool:
     """Return True iff ``pattern`` matches inside ``header_orig`` with a
     follow-on token that (a) has an uppercase first character (Unicode-
@@ -492,7 +558,12 @@ class BiasDetector:
         text = _sanitise_for_detection(text)
 
         text_lower = text.lower()
-        header_orig = text[:200]   # honorific scan needs ORIGINAL case
+        # Adaptive header window: scans up to 8 short lines or 1000
+        # chars, terminating on section headers or long paragraphs.
+        # Replaces the prior fixed text[:200] cap that an attacker
+        # could evade by padding the resume with 200+ chars of
+        # address / contact info before the salutation.
+        header_orig = _extract_header_window(text)
 
         signals: dict = {
             "male_pronoun": 0,
