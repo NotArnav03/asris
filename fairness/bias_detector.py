@@ -291,6 +291,27 @@ _RESUME_VOCAB_DENYLIST: frozenset = frozenset({
 # uncertain about this token to bias the categorical decision.
 _NAME_SIGNAL_CONFIDENCE_FLOOR: float = 0.40
 
+# --- Calibration-drift gate thresholds -------------------------------------
+# The classifier's published overall ECE is 0.012 (well-calibrated by the
+# field-convention threshold of 0.05).  But per-culture ECE varies: Arab
+# 0.090, south_asian 0.080, european_other 0.024.  An audit whose corpus
+# composition skews heavily toward high-ECE cultures has a weighted-ECE
+# above 0.05, which means the predicted P(female|name) values are NOT
+# trustworthy at face value — pass/fail verdicts under these conditions
+# should not be published as if the math is fully calibrated.
+#
+# Three tiers:
+#   weighted_ece <= 0.05    "ok"          publish verdict as-is
+#   0.05 < we <= 0.10       "warn"        publish + add caveat recommendation
+#   weighted_ece > 0.10     "inconclusive" override verdict to inconclusive
+#
+# Coverage gate (separate): if less than half the audit's candidates are
+# in cultures with ANY measured ECE, the weighted_ece is itself unreliable
+# and the verdict is forced to inconclusive.
+_CALIBRATION_DRIFT_OK_CEILING: float    = 0.05
+_CALIBRATION_DRIFT_WARN_CEILING: float  = 0.10
+_CALIBRATION_ECE_COVERAGE_FLOOR: float  = 0.50
+
 
 # --- Model card cache for per-culture ECE disclosure ----------------------
 # Loaded once and reused across audits.  Returns {} when the card file is
@@ -940,6 +961,49 @@ class BiasDetector:
                 "model_card_ece":    per_culture_ece.get(culture),
             }
 
+        # --- Corpus-weighted calibration drift gate ----------------------
+        # We weight per-culture ECE by the audit's own culture composition.
+        # This produces a single number representing how well-calibrated
+        # the classifier IS on THIS particular audit corpus — which is
+        # what governs whether the AIR pass/fail can be trusted.  See
+        # _CALIBRATION_DRIFT_* constants for the three tier thresholds.
+        ece_weighted_sum = 0.0
+        ece_weight_total = 0   # count of candidates in cultures with ECE
+        for culture, recs in culture_groups.items():
+            ece = per_culture_ece.get(culture)
+            if ece is None:
+                continue
+            n = len(recs)
+            ece_weighted_sum += n * ece
+            ece_weight_total += n
+        total_audited = sum(len(v) for v in culture_groups.values())
+        ece_coverage = (ece_weight_total / total_audited) if total_audited else 0.0
+        weighted_ece = (
+            ece_weighted_sum / ece_weight_total
+            if ece_weight_total > 0 else None
+        )
+
+        if weighted_ece is None:
+            drift_status = "unknown"  # no ECE data at all
+        elif ece_coverage < _CALIBRATION_ECE_COVERAGE_FLOOR:
+            drift_status = "inconclusive_low_ece_coverage"
+        elif weighted_ece > _CALIBRATION_DRIFT_WARN_CEILING:
+            drift_status = "inconclusive_high_drift"
+        elif weighted_ece > _CALIBRATION_DRIFT_OK_CEILING:
+            drift_status = "warn"
+        else:
+            drift_status = "ok"
+
+        results["calibration_drift"] = {
+            "weighted_ece":     (round(weighted_ece, 4)
+                                 if weighted_ece is not None else None),
+            "ece_coverage":     round(ece_coverage, 4),
+            "ok_ceiling":       _CALIBRATION_DRIFT_OK_CEILING,
+            "warn_ceiling":     _CALIBRATION_DRIFT_WARN_CEILING,
+            "coverage_floor":   _CALIBRATION_ECE_COVERAGE_FLOOR,
+            "status":           drift_status,
+        }
+
         # --- Dual AIR computation ----------------------------------------
         # We report TWO views of the same audit:
         #
@@ -971,6 +1035,18 @@ class BiasDetector:
                 air_hard["adverse_impact_ratio"],
                 air_soft["adverse_impact_ratio"],
             )
+            raw_passes = conservative >= self.adverse_impact_threshold
+            # The publish-ready verdict folds in the calibration drift
+            # gate.  raw passes_4_5_rule is left unchanged so callers
+            # that want the unadjusted math can still read it.
+            if drift_status in ("inconclusive_low_ece_coverage",
+                                "inconclusive_high_drift"):
+                verdict = f"inconclusive ({drift_status})"
+            elif raw_passes:
+                verdict = "pass" if drift_status in ("ok", "unknown") else "pass_with_drift_warning"
+            else:
+                verdict = "fail"
+
             results["gender_bias_analysis"] = {
                 **air_hard,
                 "adverse_impact_ratio_hard": air_hard["adverse_impact_ratio"],
@@ -979,37 +1055,63 @@ class BiasDetector:
                 "soft_female_mass":          air_soft["female_total_mass"],
                 "soft_male_rate":            air_soft["male_rate"],
                 "soft_female_rate":          air_soft["female_rate"],
-                # The conservative-of-both pass/fail.  Top-level
-                # passes_4_5_rule mirrors this so the existing schema
-                # remains valid; hard-only callers can still read the
-                # original `adverse_impact_ratio` key.
+                # Raw conservative-of-both AIR — unchanged by the
+                # calibration drift gate.  Use this when you want the
+                # math; use `verdict` when you want the publishable answer.
                 "adverse_impact_ratio":      round(conservative, 4),
-                "passes_4_5_rule":           conservative >= self.adverse_impact_threshold,
+                "passes_4_5_rule":           raw_passes,
                 "risk_level":                self._risk_level(conservative),
                 "agreement_gap":             round(
                     abs(air_hard["adverse_impact_ratio"]
                         - air_soft["adverse_impact_ratio"]),
                     4,
                 ),
+                # The verdict the audit RECOMMENDS publishing.
+                # "pass" / "fail"                         — math is trusted
+                # "pass_with_drift_warning"               — math passes, drift
+                #                                           in warn band (0.05<we<=0.10)
+                # "inconclusive_high_drift"               — drift > 0.10
+                # "inconclusive_low_ece_coverage"         — < 50% of audit
+                #                                           is in cultures with measured ECE
+                "verdict":                   verdict,
             }
 
-            if not results["gender_bias_analysis"]["passes_4_5_rule"]:
+            if "inconclusive" in verdict:
                 results["recommendations"].append(
-                    f"[WARN] Gender AIR (conservative of hard/soft) = "
+                    f"[INCONCLUSIVE] {verdict}: weighted ECE="
+                    f"{(results['calibration_drift']['weighted_ece'] or 0):.3f}, "
+                    f"coverage={results['calibration_drift']['ece_coverage']:.0%}. "
+                    f"AIR={conservative:.2f}, but the classifier's "
+                    f"calibration on this culture mix is too poor to "
+                    f"publish a pass/fail verdict."
+                )
+            elif not raw_passes:
+                results["recommendations"].append(
+                    f"[FAIL] Gender AIR (conservative of hard/soft) = "
                     f"{conservative:.2f} (below "
                     f"{self.adverse_impact_threshold:.2f} threshold). "
                     f"Hard AIR={air_hard['adverse_impact_ratio']:.2f}, "
                     f"Soft AIR={air_soft['adverse_impact_ratio']:.2f}. "
                     f"Potential gender bias detected."
                 )
-            elif (results["gender_bias_analysis"]["agreement_gap"]
-                  > 0.10):
-                results["recommendations"].append(
-                    f"[NOTE] Hard and soft AIR disagree by "
-                    f"{results['gender_bias_analysis']['agreement_gap']:.2f}. "
-                    f"Borderline name predictions are material — review "
-                    f"the per-candidate name_source breakdown."
-                )
+            else:
+                if drift_status == "warn":
+                    results["recommendations"].append(
+                        f"[NOTE] Verdict is PASS but classifier "
+                        f"calibration on this culture mix is degraded "
+                        f"(weighted ECE="
+                        f"{results['calibration_drift']['weighted_ece']:.3f}, "
+                        f"above the 0.05 target).  Treat the AIR number "
+                        f"as a lower-precision estimate."
+                    )
+                if (results["gender_bias_analysis"]["agreement_gap"]
+                        > 0.10):
+                    results["recommendations"].append(
+                        f"[NOTE] Hard and soft AIR disagree by "
+                        f"{results['gender_bias_analysis']['agreement_gap']:.2f}. "
+                        f"Borderline name predictions are material — review "
+                        f"the per-candidate name_source breakdown."
+                    )
 
         # Score distribution
         all_scores = list(scores.values())

@@ -918,6 +918,133 @@ class TestBiasDetector:
                 "western", "east_asian", "arab", "south_asian"
             ))
 
+    # --- Calibration-drift gate (Task #21) -----------------------------
+
+    def test_audit_emits_calibration_drift_block(self):
+        from fairness.bias_detector import BiasDetector
+        texts = {
+            "p.txt": "Priya Sharma\nEngineer",
+            "j.txt": "John Smith\nEngineer",
+            "f.txt": "Fatima Khan\nAnalyst",
+            "m.txt": "Mohammed Ali\nAnalyst",
+        }
+        scores = {"p.txt": 0.9, "j.txt": 0.8, "f.txt": 0.7, "m.txt": 0.6}
+        audit = BiasDetector().audit_ranking_bias(texts, scores)
+        cd = audit["calibration_drift"]
+        assert "weighted_ece" in cd
+        assert "ece_coverage" in cd
+        assert "status" in cd
+        assert cd["status"] in (
+            "ok", "warn", "inconclusive_high_drift",
+            "inconclusive_low_ece_coverage", "unknown",
+        )
+
+    def test_audit_emits_verdict_field(self):
+        from fairness.bias_detector import BiasDetector
+        texts = {
+            "p.txt": "Priya Sharma\nEngineer",
+            "j.txt": "John Smith\nEngineer",
+        }
+        scores = {"p.txt": 0.9, "j.txt": 0.8}
+        audit = BiasDetector().audit_ranking_bias(texts, scores)
+        analysis = audit.get("gender_bias_analysis", {})
+        if analysis:  # only emitted when both groups present
+            assert "verdict" in analysis
+            assert any(verdict_prefix in analysis["verdict"] for verdict_prefix in (
+                "pass", "fail", "inconclusive",
+            ))
+
+    def test_drift_gate_overrides_pass_when_corpus_is_high_drift(self):
+        # Direct unit test on _air_soft + drift logic: simulate an
+        # audit where the AIR math passes but weighted_ece would be
+        # above 0.10 (the high-drift ceiling).  Verify the verdict
+        # field shifts to inconclusive_high_drift.  We synthesise the
+        # audit by mocking _load_model_card_ece via monkey-patching.
+        import fairness.bias_detector as bd
+        from fairness.bias_detector import BiasDetector
+        original = bd._load_model_card_ece
+        bd._MODEL_CARD_ECE_CACHE = None
+        try:
+            bd._load_model_card_ece = lambda: {
+                # Simulated very-high-drift culture for all candidates.
+                "south_asian": 0.20,
+            }
+            # All candidates resolve to south_asian via lookup hits.
+            texts = {
+                f"r{i}.txt": name + "\nEngineer"
+                for i, name in enumerate([
+                    "Priya Sharma", "Anjali Patel", "Neha Verma",
+                    "Rahul Mehta", "Vikram Gupta", "Arjun Kumar",
+                ])
+            }
+            scores = {k: 0.5 + i * 0.05 for i, k in enumerate(texts)}
+            audit = BiasDetector().audit_ranking_bias(texts, scores)
+            assert audit["calibration_drift"]["weighted_ece"] == 0.20
+            assert audit["calibration_drift"]["status"] == "inconclusive_high_drift"
+            if audit["gender_bias_analysis"]:
+                assert "inconclusive" in audit["gender_bias_analysis"]["verdict"]
+        finally:
+            bd._load_model_card_ece = original
+            bd._MODEL_CARD_ECE_CACHE = None
+
+    def test_drift_warn_band_passes_with_warning_recommendation(self):
+        # Weighted ECE in (0.05, 0.10] -> "warn" status.  We construct
+        # balanced selection (female_rate == male_rate) so AIR passes,
+        # then assert the warn-band NOTE recommendation fires.
+        import fairness.bias_detector as bd
+        from fairness.bias_detector import BiasDetector
+        original = bd._load_model_card_ece
+        bd._MODEL_CARD_ECE_CACHE = None
+        try:
+            bd._load_model_card_ece = lambda: {"south_asian": 0.08}
+            texts = {
+                "f1.txt": "Priya Sharma\nEngineer",     # female sa
+                "m1.txt": "Rahul Mehta\nEngineer",      # male sa
+                "f2.txt": "Anjali Patel\nEngineer",     # female sa
+                "m2.txt": "Vikram Gupta\nEngineer",     # male sa
+            }
+            # Median is 0.75 -> selected are scores >= 0.75.
+            # Score m2=0.9 (selected), f2=0.8 (selected), m1=0.7 (not),
+            # f1=0.6 (not).  Selected: 1 male + 1 female. AIR = 1.0 PASS.
+            scores = {"f1.txt": 0.6, "m1.txt": 0.7, "f2.txt": 0.8, "m2.txt": 0.9}
+            audit = BiasDetector().audit_ranking_bias(texts, scores)
+            assert audit["calibration_drift"]["status"] == "warn"
+            assert any("calibration" in rec.lower()
+                       for rec in audit["recommendations"])
+        finally:
+            bd._load_model_card_ece = original
+            bd._MODEL_CARD_ECE_CACHE = None
+
+    def test_drift_low_coverage_forces_inconclusive(self):
+        # When fewer than 50% of candidates are in cultures with
+        # measured ECE the verdict is inconclusive regardless of AIR.
+        # Mock ECE for "south_asian" only; the corpus mixes south_asian
+        # with arab + european_other so coverage drops below 50%.
+        import fairness.bias_detector as bd
+        from fairness.bias_detector import BiasDetector
+        original = bd._load_model_card_ece
+        bd._MODEL_CARD_ECE_CACHE = None
+        try:
+            bd._load_model_card_ece = lambda: {"south_asian": 0.05}
+            texts = {
+                "p.txt": "Priya Sharma\nEngineer",       # south_asian
+                "f.txt": "Fatima Khan\nAnalyst",         # arab / european_other
+                "m.txt": "Mohammed Ali\nAnalyst",        # arab
+                "j.txt": "John Smith\nEngineer",         # european_other
+                "s.txt": "Sebastian Lopez\nDesigner",    # western or european_other
+            }
+            scores = {k: 0.5 + i * 0.05 for i, k in enumerate(texts)}
+            audit = BiasDetector().audit_ranking_bias(texts, scores)
+            cd = audit["calibration_drift"]
+            # ece_coverage = (n in south_asian) / (total).  Only Priya is
+            # south_asian here, so coverage is 1/5 = 0.2 < 0.5.
+            assert cd["ece_coverage"] < 0.5
+            assert cd["status"] == "inconclusive_low_ece_coverage"
+        finally:
+            bd._load_model_card_ece = original
+            bd._MODEL_CARD_ECE_CACHE = None
+
+
     def test_audit_batched_path_matches_per_resume_path(self):
         # Calling detect_gender_proxy_scored standalone (per-resume
         # path) and via audit_ranking_bias (batched path) must produce
