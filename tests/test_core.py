@@ -1390,6 +1390,42 @@ class TestBiasDetector:
         assert "counterfactual_robustness" not in audit
 
 
+    # --- Per-resume audit trail (Task #37) -----------------------------
+
+    def test_audit_surfaces_per_resume_trail(self):
+        from fairness.bias_detector import BiasDetector
+        texts = {
+            "p.txt": "Priya Sharma\nEngineer",
+            "j.txt": "John Smith\nEngineer",
+        }
+        scores = {"p.txt": 0.9, "j.txt": 0.8}
+        audit = BiasDetector().audit_ranking_bias(texts, scores)
+        assert "per_resume" in audit
+        pr = audit["per_resume"]
+        assert set(pr.keys()) == set(texts.keys())
+        for filename, row in pr.items():
+            for key in (
+                "score", "selected", "hard_gender", "name_token",
+                "name_source", "name_p_female", "name_is_surname",
+                "name_culture", "detected_language", "male_pronoun",
+                "female_pronoun", "male_title", "female_title",
+                "neutral_title", "confidence",
+            ):
+                assert key in row, f"{filename} missing key {key!r}"
+
+    def test_per_resume_trail_matches_individual_call(self):
+        from fairness.bias_detector import BiasDetector
+        texts = {"p.txt": "Priya Sharma\nEngineer"}
+        scores = {"p.txt": 0.9}
+        audit = BiasDetector().audit_ranking_bias(texts, scores)
+        individual = BiasDetector.detect_gender_proxy_scored(texts["p.txt"])
+        trail = audit["per_resume"]["p.txt"]
+        # Key fields must match the standalone call.
+        assert trail["name_token"]    == individual["signals"]["name_token"]
+        assert trail["name_p_female"] == individual["signals"]["name_p_female"]
+        assert trail["hard_gender"]   == individual["gender"]
+
+
     def test_audit_batched_path_matches_per_resume_path(self):
         # Calling detect_gender_proxy_scored standalone (per-resume
         # path) and via audit_ranking_bias (batched path) must produce

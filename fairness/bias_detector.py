@@ -1304,6 +1304,29 @@ class BiasDetector:
                     "name_source":   signals.get("name_source", "empty"),
                     "p_female":      float(signals.get("name_p_female", 0.5)),
                 })
+                # Forensic per-resume trail — full signal snapshot for
+                # individual-case review without having to re-run
+                # detect_gender_proxy_scored separately.  Surfaced
+                # under audit["per_resume"] below.
+                if "per_resume" not in locals():
+                    per_resume: dict = {}
+                per_resume[filename] = {
+                    "score":              scores[filename],
+                    "selected":           selected,
+                    "hard_gender":        gender,
+                    "name_token":         signals.get("name_token", ""),
+                    "name_source":        signals.get("name_source", "empty"),
+                    "name_p_female":      signals.get("name_p_female", 0.5),
+                    "name_is_surname":    signals.get("name_is_surname", False),
+                    "name_culture":       signals.get("name_culture", "unknown"),
+                    "detected_language":  signals.get("detected_language", "en"),
+                    "male_pronoun":       signals.get("male_pronoun", 0),
+                    "female_pronoun":     signals.get("female_pronoun", 0),
+                    "male_title":         signals.get("male_title", False),
+                    "female_title":       signals.get("female_title", False),
+                    "neutral_title":      signals.get("neutral_title", False),
+                    "confidence":         result.get("confidence", 0.0),
+                }
 
         results: dict = {
             "threshold": selection_threshold,
@@ -1313,6 +1336,11 @@ class BiasDetector:
             "score_distribution": {},
             "detection_coverage": {},
             "culture_distribution": {},
+            # Forensic per-resume audit trail.  Same signals
+            # detect_gender_proxy_scored produced, surfaced keyed by
+            # filename so reviewers can drill into individual cases
+            # without having to re-invoke the detector on each resume.
+            "per_resume": locals().get("per_resume", {}),
             "integrity": {
                 # SHA-256 of the loaded model.pkl compared against the
                 # value recorded in model_card.json at training time.
