@@ -2525,6 +2525,80 @@ class TestCounterfactualRobustness:
 
 
 # ═══════════════════════════════════════════════════════════════
+# API hardening (Task #10)
+# ═══════════════════════════════════════════════════════════════
+
+class TestApiHardening:
+    """Tests for /audit + /rank + /explain API hardening.
+
+    Uses FastAPI's TestClient to exercise the endpoints WITHOUT
+    going over the network.  Some tests force-set environment
+    variables before importing the server module so the configured
+    caps and auth requirements are picked up.
+    """
+
+    def _client(self):
+        # Defer import — the server module imports heavy ML deps on load.
+        try:
+            from fastapi.testclient import TestClient
+            from api.server import app
+            return TestClient(app)
+        except Exception as e:
+            import pytest
+            pytest.skip(f"FastAPI test stack unavailable: {e}")
+
+    def test_audit_rejects_oversized_single_resume(self, monkeypatch):
+        client = self._client()
+        # Construct a body well over the per-resume cap.
+        oversized = "x" * 250_000
+        resp = client.post(
+            "/audit",
+            json={
+                "jd_text": "role",
+                "resume_texts": {"big.txt": oversized},
+            },
+        )
+        assert resp.status_code == 413
+
+    def test_audit_rejects_too_many_resumes(self):
+        client = self._client()
+        # 10000 tiny resumes — over the 5000 cap.
+        resumes = {f"r{i}.txt": "John\nEng" for i in range(10_000)}
+        resp = client.post(
+            "/audit",
+            json={"jd_text": "role", "resume_texts": resumes},
+        )
+        assert resp.status_code == 413
+
+    def test_api_key_required_when_set(self, monkeypatch):
+        # Set env BEFORE re-import so the module captures it.  We use
+        # importlib.reload because api.server reads os.getenv at module
+        # load.
+        monkeypatch.setenv("FAIMR_API_KEY", "secret123")
+        import importlib, api.server
+        importlib.reload(api.server)
+        from fastapi.testclient import TestClient
+        client = TestClient(api.server.app)
+        # Without header: 401
+        resp = client.post(
+            "/audit",
+            json={"jd_text": "role", "resume_texts": {"a.txt": "John\nEng"}},
+        )
+        assert resp.status_code == 401
+        # With correct header: not 401 (may be other status from
+        # missing infra in the test env, but auth must pass).
+        resp = client.post(
+            "/audit",
+            headers={"X-API-Key": "secret123"},
+            json={"jd_text": "role", "resume_texts": {"a.txt": "John\nEng"}},
+        )
+        assert resp.status_code != 401
+        # Cleanup
+        monkeypatch.delenv("FAIMR_API_KEY", raising=False)
+        importlib.reload(api.server)
+
+
+# ═══════════════════════════════════════════════════════════════
 # Constrained-Insertion FCR (Task #9)
 # ═══════════════════════════════════════════════════════════════
 

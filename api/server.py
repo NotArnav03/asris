@@ -8,11 +8,13 @@ Usage:
 """
 
 import os
+import time
+from collections import defaultdict, deque
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
@@ -29,18 +31,143 @@ logger = get_logger("api.server")
 
 # ─── FastAPI App ─────────────────────────────────────────────────
 
+# --- API hardening configuration -------------------------------------------
+# All defaults can be overridden via environment variables.  Values are
+# chosen to be safe for development; production should tighten the CORS
+# allowlist and set FAIMR_API_KEY to require authenticated access.
+
+# Per-resume body cap.  100 KB comfortably fits any real resume; values
+# beyond this almost certainly indicate either an attack (DoS via giant
+# pasted text) or a misconfigured upload.
+MAX_RESUME_BYTES = int(os.getenv("FAIMR_MAX_RESUME_BYTES", "100000"))
+
+# Max number of resumes in a single ranking / audit request.
+MAX_REQUEST_RESUMES = int(os.getenv("FAIMR_MAX_REQUEST_RESUMES", "5000"))
+
+# Total request body cap.  5000 resumes * ~100 KB worst case = 500 MB,
+# but that's the absolute ceiling; the default below is much tighter.
+MAX_TOTAL_REQUEST_BYTES = int(
+    os.getenv("FAIMR_MAX_TOTAL_BYTES", str(50 * 1024 * 1024))  # 50 MB
+)
+
+# Token-bucket rate limit: requests per window per IP.
+RATE_LIMIT_WINDOW_SECONDS = int(
+    os.getenv("FAIMR_RATE_LIMIT_WINDOW_SECONDS", "60")
+)
+RATE_LIMIT_REQUESTS = int(os.getenv("FAIMR_RATE_LIMIT_REQUESTS", "60"))
+
+# Optional API key.  When set, every protected endpoint requires the
+# header "X-API-Key: <value>".  Empty string (default) disables auth.
+API_KEY = os.getenv("FAIMR_API_KEY", "").strip()
+
+# CORS allowlist.  Comma-separated list of origins.  Default is the
+# permissive "*"; production deployments should set this to a list of
+# trusted origins.  A single "*" is still allowed for local dev.
+_cors_env = os.getenv("FAIMR_CORS_ORIGINS", "*").strip()
+ALLOWED_ORIGINS = [o.strip() for o in _cors_env.split(",") if o.strip()]
+
+
 app = FastAPI(
     title="FAIMR — Fairness-Aware Interpretable Multi-Signal Ranking API",
     description="Match resumes to job descriptions using multi-signal AI ranking.",
-    version="1.0.0",
+    version="1.1.0",
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
+    allow_credentials=False if "*" in ALLOWED_ORIGINS else True,
 )
+
+
+# --- Rate limiter middleware -----------------------------------------------
+# Sliding window per remote address.  Kept in-process (a single fastapi
+# worker); a production multi-worker deployment should use a shared
+# Redis backend, but the in-process limiter is enough to neutralise the
+# casual flood-attack vector documented in the security review.
+_rate_buckets: dict = defaultdict(deque)
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    client_ip = (request.client.host if request.client else "unknown")
+    now = time.monotonic()
+    bucket = _rate_buckets[client_ip]
+    # Drop expired entries
+    while bucket and bucket[0] < now - RATE_LIMIT_WINDOW_SECONDS:
+        bucket.popleft()
+    if len(bucket) >= RATE_LIMIT_REQUESTS:
+        return HTMLResponse(
+            content=(
+                f"Rate limit exceeded: {RATE_LIMIT_REQUESTS} requests "
+                f"per {RATE_LIMIT_WINDOW_SECONDS}s.  Retry shortly."
+            ),
+            status_code=429,
+        )
+    bucket.append(now)
+    return await call_next(request)
+
+
+def require_api_key(request: Request) -> None:
+    """FastAPI dependency that checks the X-API-Key header when
+    FAIMR_API_KEY is set in the environment.  No-op when unset."""
+    if not API_KEY:
+        return
+    provided = request.headers.get("X-API-Key", "")
+    if provided != API_KEY:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing or invalid X-API-Key header",
+        )
+
+
+def _validate_resume_texts(resume_texts: dict) -> None:
+    """Reject the request when the resume_texts payload violates the
+    configured caps.  Raises HTTPException(413) on size violations,
+    422 on schema violations."""
+    if not isinstance(resume_texts, dict):
+        raise HTTPException(
+            status_code=422,
+            detail="resume_texts must be a JSON object",
+        )
+    n = len(resume_texts)
+    if n > MAX_REQUEST_RESUMES:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"Too many resumes: {n} > {MAX_REQUEST_RESUMES} cap. "
+                f"Split the corpus into smaller batches."
+            ),
+        )
+    total_bytes = 0
+    for filename, text in resume_texts.items():
+        if not isinstance(text, str):
+            raise HTTPException(
+                status_code=422,
+                detail=f"resume_texts[{filename!r}] must be a string",
+            )
+        body_bytes = len(text.encode("utf-8"))
+        if body_bytes > MAX_RESUME_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"Resume {filename!r} is {body_bytes} bytes; "
+                    f"max is {MAX_RESUME_BYTES}.  Inspect the upload — "
+                    f"a real resume rarely exceeds 100 KB."
+                ),
+            )
+        total_bytes += body_bytes
+        if total_bytes > MAX_TOTAL_REQUEST_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"Total request body exceeds "
+                    f"{MAX_TOTAL_REQUEST_BYTES} bytes.  "
+                    f"Reduce the number of resumes per call."
+                ),
+            )
 
 # Mount frontend static files
 FRONTEND_DIR = BASE_DIR / "frontend"
@@ -212,11 +339,15 @@ async def rank_pdf_resumes(
 
 
 @app.post("/rank", response_model=RankResponse)
-async def rank_resumes(request: RankRequest):
+async def rank_resumes(
+    request: RankRequest,
+    _api: None = Depends(require_api_key),
+):
     """
     Rank resumes against a job description.
     Accepts a JD and a dict of resumes, returns ranked candidates.
     """
+    _validate_resume_texts(request.resume_texts)
     if not request.resume_texts:
         raise HTTPException(status_code=400, detail="No resume texts provided")
 
@@ -245,11 +376,20 @@ async def rank_resumes(request: RankRequest):
 
 
 @app.post("/explain")
-async def explain_match(request: ExplainRequest):
+async def explain_match(
+    request: ExplainRequest,
+    _api: None = Depends(require_api_key),
+):
     """
     Explain why a resume matches (or doesn't match) a job description.
     Returns skill analysis, keyword overlap, and a human-readable verdict.
     """
+    # Per-resume length cap also applies here (single-resume endpoint).
+    if len(request.resume_text.encode("utf-8")) > MAX_RESUME_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Resume body exceeds {MAX_RESUME_BYTES}-byte cap.",
+        )
     explainer = get_explainer()
     manager = get_embedding_manager()
 
@@ -301,11 +441,15 @@ async def cache_stats():
 
 
 @app.post("/audit")
-async def audit_fairness(request: RankRequest):
+async def audit_fairness(
+    request: RankRequest,
+    _api: None = Depends(require_api_key),
+):
     """
     Run a fairness audit on ranked candidates.
     Returns bias metrics + fairness-constrained re-ranking.
     """
+    _validate_resume_texts(request.resume_texts)
     if not request.resume_texts:
         raise HTTPException(status_code=400, detail="No resume texts provided")
 
