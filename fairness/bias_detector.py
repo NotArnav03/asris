@@ -603,6 +603,16 @@ _CALIBRATION_DRIFT_OK_CEILING: float    = 0.05
 _CALIBRATION_DRIFT_WARN_CEILING: float  = 0.10
 _CALIBRATION_ECE_COVERAGE_FLOOR: float  = 0.50
 
+# --- Detection coverage gate ---------------------------------------------
+# The audit can only meaningfully report AIR for the candidates whose
+# gender we could classify.  When detection_coverage drops below this
+# floor, the AIR numerator/denominator are based on a small fraction of
+# the corpus and any "pass" verdict is statistically suspect.  We force
+# the verdict to inconclusive_low_detection_coverage and emit a
+# recommendation pointing the operator at the per-resume trail so they
+# can investigate why so many resumes failed detection.
+_DETECTION_COVERAGE_FLOOR: float = 0.50
+
 
 # --- Model card cache for per-culture ECE disclosure ----------------------
 # Loaded once and reused across audits.  Returns {} when the card file is
@@ -1381,10 +1391,13 @@ class BiasDetector:
         # Detection coverage stats
         n_known = sum(len(v) for k, v in gender_groups.items() if k != "unknown")
         n_unknown = len(gender_groups.get("unknown", []))
+        coverage_rate = n_known / max(n_known + n_unknown, 1)
         results["detection_coverage"] = {
-            "detected": n_known,
-            "undetected": n_unknown,
-            "coverage_rate": round(n_known / max(n_known + n_unknown, 1), 4),
+            "detected":             n_known,
+            "undetected":           n_unknown,
+            "coverage_rate":        round(coverage_rate, 4),
+            "coverage_floor":       _DETECTION_COVERAGE_FLOOR,
+            "coverage_floor_met":   coverage_rate >= _DETECTION_COVERAGE_FLOOR,
         }
 
         # Per-group stats
@@ -1511,11 +1524,18 @@ class BiasDetector:
                 air_soft["adverse_impact_ratio"],
             )
             raw_passes = conservative >= self.adverse_impact_threshold
-            # The publish-ready verdict folds in the calibration drift
-            # gate.  raw passes_4_5_rule is left unchanged so callers
-            # that want the unadjusted math can still read it.
-            if drift_status in ("inconclusive_low_ece_coverage",
-                                "inconclusive_high_drift"):
+            # The publish-ready verdict folds in multiple gates in
+            # PRIORITY ORDER.  Earlier gates dominate later ones —
+            # an inconclusive verdict due to low coverage is more
+            # informative than a "fail" verdict computed from the
+            # same too-small denominator.  raw passes_4_5_rule is
+            # left unchanged so callers that want the unadjusted
+            # math can still read it.
+            coverage_rate = results["detection_coverage"]["coverage_rate"]
+            if coverage_rate < _DETECTION_COVERAGE_FLOOR:
+                verdict = "inconclusive_low_detection_coverage"
+            elif drift_status in ("inconclusive_low_ece_coverage",
+                                  "inconclusive_high_drift"):
                 verdict = f"inconclusive ({drift_status})"
             elif raw_passes:
                 verdict = "pass" if drift_status in ("ok", "unknown") else "pass_with_drift_warning"
@@ -1551,7 +1571,18 @@ class BiasDetector:
                 "verdict":                   verdict,
             }
 
-            if "inconclusive" in verdict:
+            if verdict == "inconclusive_low_detection_coverage":
+                results["recommendations"].append(
+                    f"[INCONCLUSIVE] Detection coverage "
+                    f"{coverage_rate:.0%} is below the "
+                    f"{_DETECTION_COVERAGE_FLOOR:.0%} floor.  Only "
+                    f"{n_known} of {n_known + n_unknown} resumes had a "
+                    f"usable gender signal; AIR computed from the "
+                    f"remaining sample is too small to publish a "
+                    f"verdict.  Inspect audit['per_resume'] to find "
+                    f"the candidates with name_source='empty'."
+                )
+            elif "inconclusive" in verdict:
                 results["recommendations"].append(
                     f"[INCONCLUSIVE] {verdict}: weighted ECE="
                     f"{(results['calibration_drift']['weighted_ece'] or 0):.3f}, "

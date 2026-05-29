@@ -1335,6 +1335,69 @@ class TestBiasDetector:
 
     # --- Historical drift baseline (Task #34) -------------------------
 
+    # --- Detection coverage gate (Task #4 / #39) -----------------------
+
+    def test_detection_coverage_floor_surfaced(self):
+        from fairness.bias_detector import BiasDetector
+        audit = BiasDetector().audit_ranking_bias(
+            {"p.txt": "Priya Sharma\nEng", "j.txt": "John Smith\nEng"},
+            {"p.txt": 0.9, "j.txt": 0.8},
+        )
+        dc = audit["detection_coverage"]
+        for key in ("detected", "undetected", "coverage_rate",
+                    "coverage_floor", "coverage_floor_met"):
+            assert key in dc
+
+    def test_low_coverage_forces_inconclusive_verdict(self):
+        # Construct a corpus where the majority of resumes have
+        # NO detectable name (just resume vocabulary).  Coverage
+        # drops below 0.50 and the verdict is forced to
+        # inconclusive_low_detection_coverage.
+        from fairness.bias_detector import BiasDetector
+        # Surname-only headers fall to name_source="empty" — neither
+        # male_name nor female_name fires, so the candidate lands in
+        # the "unknown" bucket.  1 detectable + 4 undetectable -> 0.20
+        # detection coverage.  We pad both sides with one male candidate
+        # to give the AIR block something to compute on.
+        texts = {
+            "good_f.txt":  "Priya Sharma\nEngineer",
+            "good_m.txt":  "John Smith\nEngineer",
+            "bad1.txt":    "Khan\nFull-stack engineer",
+            "bad2.txt":    "Park\nMachine learning",
+            "bad3.txt":    "Patel\nGrowth team",
+            "bad4.txt":    "Jones\nUser experience",
+            "bad5.txt":    "Singh\nQA team",
+        }
+        scores = {k: 0.5 + i * 0.05 for i, k in enumerate(texts)}
+        audit = BiasDetector().audit_ranking_bias(texts, scores)
+        assert audit["detection_coverage"]["coverage_rate"] < 0.5
+        assert audit["detection_coverage"]["coverage_floor_met"] is False
+        if audit.get("gender_bias_analysis"):
+            assert (
+                audit["gender_bias_analysis"]["verdict"]
+                == "inconclusive_low_detection_coverage"
+            )
+        assert any(
+            "detection coverage" in r.lower()
+            for r in audit["recommendations"]
+        )
+
+    def test_full_coverage_does_not_trigger_gate(self):
+        from fairness.bias_detector import BiasDetector
+        # All detectable.
+        texts = {
+            "p.txt":  "Priya Sharma\nEngineer",
+            "j.txt":  "John Smith\nEngineer",
+            "f.txt":  "Fatima Khan\nAnalyst",
+            "m.txt":  "Mohammed Ali\nAnalyst",
+        }
+        scores = {k: 0.5 + i * 0.05 for i, k in enumerate(texts)}
+        audit = BiasDetector().audit_ranking_bias(texts, scores)
+        assert audit["detection_coverage"]["coverage_floor_met"] is True
+        if audit.get("gender_bias_analysis"):
+            assert "low_detection_coverage" not in audit["gender_bias_analysis"]["verdict"]
+
+
     def test_audit_writes_baseline_when_requested(self, tmp_path):
         from fairness.bias_detector import BiasDetector
         log = tmp_path / "audit.jsonl"
