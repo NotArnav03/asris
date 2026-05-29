@@ -447,6 +447,79 @@ class TestBiasDetector:
         )
         assert r["signals"]["male_title"] is False
 
+    # --- Unicode-confusable defence (Task #20) -------------------------
+
+    def test_fullwidth_honorific_still_fires(self):
+        # "Ｍｒ. Smith" (fullwidth M and r, U+FF2D / U+FF52) used to
+        # bypass the honorific regex because the ASCII pattern can't
+        # match the fullwidth characters.  NFKC normalisation collapses
+        # them to ASCII "Mr." before regex matching.
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "Ｍｒ. Smith\nSoftware Engineer"
+        )
+        assert r["signals"]["male_title"] is True
+
+    def test_zero_width_inside_honorific_does_not_bypass(self):
+        # "M​r. Smith" — zero-width space inside the honorific.
+        # Renders identically to "Mr. Smith" but breaks the regex
+        # word boundary. Strip pass fixes it.
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "M​r. Smith\nSoftware Engineer"
+        )
+        assert r["signals"]["male_title"] is True
+
+    def test_zero_width_joiner_in_name_does_not_bypass(self):
+        # ZWJ insertion in the follow-on name — must not prevent the
+        # honorific from firing on the cleaned token.
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "Ms. Pri‍ya Sharma\nML Engineer"
+        )
+        assert r["signals"]["female_title"] is True
+
+    def test_bom_at_start_does_not_bypass(self):
+        # U+FEFF BOM at the start of a resume is common when the file
+        # was saved with a UTF-8 BOM-prefixed encoder. It must not
+        # prevent the honorific scan from seeing the first character.
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "﻿Mrs. Khan\nAnalyst"
+        )
+        assert r["signals"]["female_title"] is True
+
+    def test_mathematical_bold_honorific_fires(self):
+        # "𝐌𝐫. Smith" — Mathematical Bold Capital/Small (U+1D400 / U+1D42B).
+        # NFKC collapses these to "Mr." so the pattern matches.
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "\U0001D40C\U0001D42B. Smith\nSoftware Engineer"
+        )
+        assert r["signals"]["male_title"] is True
+
+    def test_fullwidth_name_token_still_extracts(self):
+        # The name scan should also benefit from NFKC — a candidate
+        # whose name was pasted in fullwidth Latin still gets a
+        # readable token after sanitisation.
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "Ｐｒｉｙａ Sharma\nML Engineer"  # "Ｐｒｉｙａ"
+        )
+        assert r["signals"]["name_token"] == "priya"
+        assert r["signals"]["female_name"] is True
+
+    def test_plain_ascii_unaffected_by_sanitisation(self):
+        # Regression: NFKC/zero-width strip is idempotent on ASCII.
+        # If this fails the sanitisation has a bug that ALSO affects
+        # the 95% of inputs that aren't under attack.
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "Mr. Smith\nSoftware Engineer with 8 years experience"
+        )
+        assert r["signals"]["male_title"] is True
+        assert r["gender"] == "male"
+
     def test_doe_Sr_suffix_does_not_fire_male_title(self):
         # "John Doe Sr." — Sr is the English suffix for Senior, not
         # the Spanish honorific.  Guard against the false positive.

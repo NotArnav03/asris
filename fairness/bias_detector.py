@@ -19,6 +19,7 @@ LIMITATIONS (gender proxy detection):
 """
 
 import re
+import unicodedata
 from typing import Optional
 from collections import defaultdict
 
@@ -160,6 +161,45 @@ _HONORIFIC_PATTERNS: dict = {
         "Maître", "Maitre",                     # French legal/academic
     ]),
 }
+
+
+# Zero-width / format characters commonly used in confusable attacks.
+# U+200B ZERO WIDTH SPACE, U+200C ZERO WIDTH NON-JOINER,
+# U+200D ZERO WIDTH JOINER, U+2060 WORD JOINER, U+FEFF BOM /
+# ZERO WIDTH NO-BREAK SPACE.  These render as nothing but split
+# regex tokens — "M​r. Smith" is human-readable as "Mr. Smith"
+# but the honorific scan sees "M", "​", "r", ".".
+_ZERO_WIDTH_RE = re.compile(
+    "[​‌‍⁠﻿]"
+)
+
+
+def _sanitise_for_detection(text: str) -> str:
+    """NFKC-normalise the input and strip zero-width / BOM characters
+    to neutralise the common Unicode-confusable bypasses against the
+    honorific scan and the name-token extractor.
+
+    NFKC collapses to ASCII / compatible forms:
+        Fullwidth Latin            "Ｍｒ. Smith"  -> "Mr. Smith"
+        Mathematical alphanumeric  "𝐌𝐫. Smith"  -> "Mr. Smith"
+        Compatibility ligatures    "ﬁ"          -> "fi"
+
+    Zero-width strip defeats:
+        ZWSP inside salutation     "M\\u200Br. Smith"  -> "Mr. Smith"
+        BOM at start of header     "\\uFEFFMr. Smith"  -> "Mr. Smith"
+
+    KNOWN LIMITATION: this does NOT defend against Cyrillic-Latin
+    confusables ("Мr. Smith" with U+041C Cyrillic capital Em).
+    Closing that requires a Unicode confusables map (a la ICU's
+    confusables.txt); it is documented but deliberately not
+    implemented here because the false-positive risk of unified
+    Latin/Cyrillic name handling is non-trivial.
+    """
+    if not text:
+        return ""
+    text = unicodedata.normalize("NFKC", text)
+    text = _ZERO_WIDTH_RE.sub("", text)
+    return text
 
 
 def _honorific_fires(pattern: re.Pattern, header_orig: str) -> bool:
@@ -405,6 +445,13 @@ class BiasDetector:
             - Pronoun only (gap >= 3):          0.55
             - Otherwise:                       0.00  ("unknown")
         """
+        # Defence against Unicode-confusable bypasses BEFORE any other
+        # processing — see _sanitise_for_detection.  Without this,
+        # attackers flip detected gender with one zero-width insertion
+        # ("M​r. Smith") or a fullwidth honorific ("Ｍｒ. Smith")
+        # because the ASCII-anchored regex misses the bypassed token.
+        text = _sanitise_for_detection(text)
+
         text_lower = text.lower()
         header_orig = text[:200]   # honorific scan needs ORIGINAL case
 
