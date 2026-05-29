@@ -1281,6 +1281,145 @@ class TestFairnessRanker:
 
 
 # ═══════════════════════════════════════════════════════════════
+# Counterfactual Name-Swap Robustness (Task #22)
+# ═══════════════════════════════════════════════════════════════
+
+class TestCounterfactualRobustness:
+    """Tests for evaluation/counterfactual_robustness.py.
+
+    A clean ranker (returns the same score regardless of name) must
+    pass; a name-biased ranker (returns different scores per gender)
+    must fail.  Without this harness there's no automated test that
+    surfaces ranker-level name bias.
+    """
+
+    def test_clean_scorer_is_robust(self):
+        from evaluation.counterfactual_robustness import name_swap_robustness
+
+        # Scorer returns a constant — perfectly robust by construction.
+        def clean(jd, resume):
+            return 0.75
+
+        report = name_swap_robustness(
+            scorer=clean,
+            jd="Senior Python role",
+            base_resume="{NAME}\nSenior Python Developer\n5 years.",
+        )
+        assert report.robust is True
+        assert report.score_gap == 0.0
+        assert report.max_swap_delta == 0.0
+        assert report.substitution_mode == "placeholder"
+
+    def test_male_biased_scorer_fails_robustness(self):
+        from evaluation.counterfactual_robustness import name_swap_robustness
+
+        # Scorer that boosts male names — simulates a biased ranker.
+        male_first_names = {"john", "michael", "rahul", "vikram", "wei",
+                            "hiroshi", "mohammed", "omar"}
+
+        def biased(jd, resume):
+            first = resume.split()[0].lower()
+            return 0.9 if first in male_first_names else 0.6
+
+        report = name_swap_robustness(
+            scorer=biased,
+            jd="Senior Python role",
+            base_resume="{NAME}\nDeveloper",
+            gap_threshold=0.02,
+        )
+        assert report.robust is False
+        # |0.9 - 0.6| = 0.3 — well above the 0.02 threshold
+        assert report.score_gap > 0.2
+        assert any("gap" in n.lower() for n in report.notes)
+
+    def test_high_variance_scorer_fails_via_swap_delta(self):
+        from evaluation.counterfactual_robustness import name_swap_robustness
+
+        # Scorer that returns clean scores for most names but spikes
+        # on one — the mean gap is small but max swap delta is huge.
+        def spiky(jd, resume):
+            if "Priya" in resume:
+                return 0.99
+            return 0.50
+
+        report = name_swap_robustness(
+            scorer=spiky,
+            jd="role",
+            base_resume="{NAME}\nDeveloper",
+            gap_threshold=0.10,            # generous gap budget
+            swap_delta_threshold=0.05,     # tight swap budget
+        )
+        assert report.robust is False
+        assert report.max_swap_delta >= 0.4
+        assert any("swap delta" in n.lower() for n in report.notes)
+
+    def test_detection_mode_replaces_existing_name(self):
+        from evaluation.counterfactual_robustness import name_swap_robustness
+
+        captured: list = []
+
+        def capture(jd, resume):
+            captured.append(resume)
+            return 0.5
+
+        # No {NAME} placeholder -> detection mode kicks in.  The
+        # original first token ("John") should be replaced in every
+        # substitution.  We capture the per-call resumes and assert
+        # the swap actually happened.
+        base = "John Smith\nSenior Python Developer\n5 years."
+        report = name_swap_robustness(
+            scorer=capture,
+            jd="Senior Python role",
+            base_resume=base,
+        )
+        assert report.substitution_mode.startswith("detection")
+        # Every captured resume should contain one of the swap names
+        # AND none should contain the original "John" alone (since
+        # we replaced the standalone token).
+        for cap in captured:
+            assert cap != base, "resume body must change across swaps"
+
+    def test_detection_mode_fails_gracefully_without_detectable_name(self):
+        from evaluation.counterfactual_robustness import name_swap_robustness
+
+        # A header with NO Title-cased non-denylisted tokens.  Every
+        # word is lowercase + on the resume-vocab denylist, so the
+        # classifier returns no name_token and the harness must
+        # short-circuit with an informative note (not crash, not
+        # silently run a meaningless swap).
+        def scorer(jd, resume):
+            return 0.5
+
+        report = name_swap_robustness(
+            scorer=scorer,
+            jd="role",
+            base_resume="summary objective experience\nskills education",
+        )
+        assert report.male_scores == {}
+        assert report.female_scores == {}
+        assert any("no name token" in n.lower() for n in report.notes)
+
+    def test_custom_name_pools_are_used(self):
+        from evaluation.counterfactual_robustness import name_swap_robustness
+
+        seen: list = []
+
+        def scorer(jd, resume):
+            seen.append(resume.split("\n")[0])
+            return 0.5
+
+        report = name_swap_robustness(
+            scorer=scorer,
+            jd="role",
+            base_resume="{NAME}\nDeveloper",
+            male_names=["Bob"],
+            female_names=["Alice"],
+        )
+        assert list(report.male_scores.keys()) == ["Bob"]
+        assert list(report.female_scores.keys()) == ["Alice"]
+
+
+# ═══════════════════════════════════════════════════════════════
 # Counterfactual Explainer Tests
 # ═══════════════════════════════════════════════════════════════
 
