@@ -271,6 +271,9 @@ class NameGenderClassifier:
         self.integrity_violated: bool = False
         self.expected_sha: Optional[str] = None
         self.actual_sha: Optional[str] = None
+        # Card schema validation — populated by _load_model from
+        # validate_model_card(card).  Empty list means well-formed.
+        self.card_validation_errors: list = []
 
     # ----- loading ---------------------------------------------------
 
@@ -366,6 +369,11 @@ class NameGenderClassifier:
                 card = json.loads(
                     MODEL_CARD_PATH.read_text(encoding="utf-8")
                 )
+                # Schema validation runs before the integrity check —
+                # a malformed card means downstream metrics consumers
+                # may KeyError, which we want to surface explicitly
+                # rather than crash mid-audit.
+                self.card_validation_errors = validate_model_card(card)
                 self.expected_sha = (
                     card.get("integrity", {}).get("sha256")
                 )
@@ -536,6 +544,57 @@ def get_classifier() -> NameGenderClassifier:
         if _singleton is None:
             _singleton = NameGenderClassifier()
     return _singleton
+
+
+_MODEL_CARD_REQUIRED_TOP: frozenset = frozenset({
+    "model", "version", "trained_at", "integrity", "pipeline",
+    "metrics", "calibration_target",
+})
+_MODEL_CARD_REQUIRED_INTEGRITY: frozenset = frozenset({
+    "sha256", "size_bytes",
+})
+_MODEL_CARD_REQUIRED_PIPELINE: frozenset = frozenset({
+    "type", "vectorizer", "gender_classifier", "calibration",
+})
+_MODEL_CARD_REQUIRED_METRICS: frozenset = frozenset({
+    "overall", "by_culture",
+})
+
+
+def validate_model_card(card: dict) -> list:
+    """Return a list of human-readable schema-violation strings.
+
+    Empty list means the card is well-formed.  Caller decides whether
+    to refuse to start, warn, or proceed with degraded confidence —
+    BiasDetector currently surfaces the errors under
+    audit["card_validation_errors"] and prepends a recommendation.
+    """
+    errors: list = []
+    if not isinstance(card, dict):
+        return ["model_card.json must be a JSON object"]
+    missing = _MODEL_CARD_REQUIRED_TOP - card.keys()
+    if missing:
+        errors.append(f"missing top-level keys: {sorted(missing)}")
+    integ = card.get("integrity", {})
+    if isinstance(integ, dict):
+        missing_i = _MODEL_CARD_REQUIRED_INTEGRITY - integ.keys()
+        if missing_i:
+            errors.append(f"integrity missing: {sorted(missing_i)}")
+    pipe = card.get("pipeline", {})
+    if isinstance(pipe, dict):
+        missing_p = _MODEL_CARD_REQUIRED_PIPELINE - pipe.keys()
+        if missing_p:
+            errors.append(f"pipeline missing: {sorted(missing_p)}")
+    metrics = card.get("metrics", {})
+    if isinstance(metrics, dict):
+        missing_m = _MODEL_CARD_REQUIRED_METRICS - metrics.keys()
+        if missing_m:
+            errors.append(f"metrics missing: {sorted(missing_m)}")
+    # Version must be semver-shaped.
+    version = card.get("version", "")
+    if not isinstance(version, str) or len(version.split(".")) != 3:
+        errors.append(f"version must be semver-shaped, got {version!r}")
+    return errors
 
 
 def reset_classifier_singleton() -> None:

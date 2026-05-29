@@ -1826,6 +1826,66 @@ class TestNameClassifier:
         assert "previous_sha256" in card["lineage"]
 
 
+    # --- Model card schema validation (Task #38) -----------------------
+
+    def test_validate_model_card_accepts_valid_card(self):
+        from fairness.names.classifier import validate_model_card
+        valid = {
+            "model": "x", "version": "1.0.0",
+            "trained_at": "2026-01-01T00:00:00Z",
+            "integrity": {"sha256": "abc", "size_bytes": 100},
+            "pipeline": {
+                "type": "X", "vectorizer": {}, "gender_classifier": {},
+                "calibration": {},
+            },
+            "metrics": {"overall": {}, "by_culture": {}},
+            "calibration_target": {},
+        }
+        assert validate_model_card(valid) == []
+
+    def test_validate_model_card_flags_missing_top_keys(self):
+        from fairness.names.classifier import validate_model_card
+        errors = validate_model_card({"model": "x"})
+        assert errors
+        assert any("missing top-level" in e for e in errors)
+
+    def test_validate_model_card_flags_bad_version(self):
+        from fairness.names.classifier import validate_model_card
+        errors = validate_model_card({
+            "model": "x", "version": "v1", "trained_at": "now",
+            "integrity": {"sha256": "a", "size_bytes": 1},
+            "pipeline": {
+                "type": "X", "vectorizer": {}, "gender_classifier": {},
+                "calibration": {},
+            },
+            "metrics": {"overall": {}, "by_culture": {}},
+            "calibration_target": {},
+        })
+        assert any("semver" in e for e in errors)
+
+    def test_shipped_model_card_is_valid(self):
+        # Regression guard — the card we actually ship must pass.
+        from fairness.names.classifier import (
+            get_classifier, validate_model_card,
+        )
+        clf = get_classifier()
+        clf._ensure_loaded()
+        # card_validation_errors is populated during _load_model.
+        assert clf.card_validation_errors == [], (
+            f"shipped model_card.json is malformed: "
+            f"{clf.card_validation_errors}"
+        )
+
+    def test_audit_surfaces_model_card_validation_block(self):
+        from fairness.bias_detector import BiasDetector
+        audit = BiasDetector().audit_ranking_bias(
+            {"a.txt": "John\nEng"}, {"a.txt": 0.5},
+        )
+        assert "model_card_validation" in audit
+        assert "valid" in audit["model_card_validation"]
+        assert "errors" in audit["model_card_validation"]
+
+
     def test_overall_calibration_target_met(self):
         # The model_card declares calibration_target.overall_meets_target.
         # If this regresses (e.g. someone re-trains with worse data),

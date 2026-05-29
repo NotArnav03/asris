@@ -1361,6 +1361,22 @@ class BiasDetector:
                 f"has been modified since training.  Audit verdicts "
                 f"below are computed from an UNVERIFIED classifier."
             )
+        # Card schema validation results — surfaced so a malformed
+        # card (typically caused by a partial retrain that dropped
+        # a field) is visible in the audit instead of crashing
+        # downstream metric consumers.
+        _card_errors = getattr(_clf, "card_validation_errors", [])
+        results["model_card_validation"] = {
+            "valid":  not _card_errors,
+            "errors": list(_card_errors),
+        }
+        if _card_errors:
+            results["recommendations"].append(
+                f"[CRITICAL] model_card.json failed schema validation: "
+                f"{_card_errors}.  Some audit fields may be missing or "
+                f"silently broken; re-run train_classifier.py to "
+                f"regenerate the card."
+            )
 
         # Detection coverage stats
         n_known = sum(len(v) for k, v in gender_groups.items() if k != "unknown")
