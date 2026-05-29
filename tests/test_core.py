@@ -1195,6 +1195,62 @@ class TestNameClassifier:
             assert abs(b.p_female - single.p_female) < 1e-9
             assert b.source == single.source
 
+    # --- Model integrity (Task #23) -----------------------------------
+
+    def test_integrity_block_present_in_audit(self):
+        from fairness.bias_detector import BiasDetector
+        audit = BiasDetector().audit_ranking_bias(
+            {"p.txt": "Priya Sharma\nEngineer",
+             "j.txt": "John Smith\nEngineer"},
+            {"p.txt": 0.9, "j.txt": 0.8},
+        )
+        assert "integrity" in audit
+        i = audit["integrity"]
+        assert "model_integrity_violated" in i
+        assert "expected_sha256" in i
+        assert "actual_sha256" in i
+
+    def test_integrity_passes_on_unmodified_model(self):
+        # When model.pkl hasn't been touched since training, the
+        # expected and actual SHA-256 must match.  This guards
+        # against accidental schema drift in the integrity block.
+        from fairness.names.classifier import get_classifier
+        clf = get_classifier()
+        clf._ensure_loaded()
+        if clf.expected_sha is None:
+            import pytest
+            pytest.skip("model_card.json has no integrity hash")
+        assert clf.actual_sha == clf.expected_sha
+        assert clf.integrity_violated is False
+
+    def test_integrity_violation_surfaces_critical_recommendation(self):
+        # Simulate a swapped model file by force-setting the flag on
+        # an isolated classifier instance, then run a synthetic audit
+        # path that uses it.  We can't easily swap the real pickle
+        # mid-test (it's a singleton), so this exercises the
+        # plumbing via direct attribute injection on the singleton.
+        from fairness.bias_detector import BiasDetector
+        from fairness.names.classifier import get_classifier
+        clf = get_classifier()
+        clf._ensure_loaded()
+        # Snapshot originals so we restore them.
+        orig = (clf.integrity_violated, clf.expected_sha, clf.actual_sha)
+        try:
+            clf.integrity_violated = True
+            clf.expected_sha = "a" * 64
+            clf.actual_sha = "b" * 64
+            audit = BiasDetector().audit_ranking_bias(
+                {"p.txt": "Priya Sharma\nEngineer",
+                 "j.txt": "John Smith\nEngineer"},
+                {"p.txt": 0.9, "j.txt": 0.8},
+            )
+            assert audit["integrity"]["model_integrity_violated"] is True
+            assert any("[CRITICAL]" in rec and "integrity" in rec.lower()
+                       for rec in audit["recommendations"])
+        finally:
+            clf.integrity_violated, clf.expected_sha, clf.actual_sha = orig
+
+
     def test_overall_calibration_target_met(self):
         # The model_card declares calibration_target.overall_meets_target.
         # If this regresses (e.g. someone re-trains with worse data),

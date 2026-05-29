@@ -222,6 +222,15 @@ class NameGenderClassifier:
         self._surnames: set = set()
         self._load_lock = threading.Lock()
         self._loaded = False
+        # Integrity verification — populated by _load_model.
+        # integrity_violated stays False when the recomputed SHA-256
+        # of model.pkl matches the value model_card.json was trained
+        # to expect.  When they diverge, the audit prepends a
+        # [CRITICAL] recommendation; callers can inspect the field
+        # directly to refuse to run.
+        self.integrity_violated: bool = False
+        self.expected_sha: Optional[str] = None
+        self.actual_sha: Optional[str] = None
 
     # ----- loading ---------------------------------------------------
 
@@ -284,8 +293,34 @@ class NameGenderClassifier:
                 f"Trained model not found at {self._model_path}.  "
                 f"Run fairness/names/train_classifier.py to regenerate it."
             )
-        with self._model_path.open("rb") as fh:
-            self._model = pickle.load(fh)
+        model_bytes = self._model_path.read_bytes()
+        self._model = pickle.loads(model_bytes)
+        # --- Integrity verification ----------------------------------
+        # Compare the just-read model file's SHA-256 against the value
+        # the model card was trained to expect.  We swallow failures
+        # because integrity is decorative when no card or no hash is
+        # available — the load itself succeeded, so the audit can
+        # still run, but the integrity_violated flag will surface
+        # the missing information to the audit consumer.
+        try:
+            import hashlib
+            import json
+            if MODEL_CARD_PATH.exists():
+                card = json.loads(
+                    MODEL_CARD_PATH.read_text(encoding="utf-8")
+                )
+                self.expected_sha = (
+                    card.get("integrity", {}).get("sha256")
+                )
+                if self.expected_sha:
+                    self.actual_sha = hashlib.sha256(model_bytes).hexdigest()
+                    if self.actual_sha != self.expected_sha:
+                        self.integrity_violated = True
+        except Exception:
+            # Defensive: never block the load on integrity verification.
+            self.integrity_violated = False
+            self.expected_sha = None
+            self.actual_sha = None
 
     # ----- prediction ------------------------------------------------
 

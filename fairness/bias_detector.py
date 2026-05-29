@@ -824,6 +824,20 @@ class BiasDetector:
         if selection_threshold is None:
             selection_threshold = float(np.median(list(scores.values())))
 
+        # --- Phase 0: classifier integrity verification -----------------
+        # Force the classifier to load (idempotent) so its integrity
+        # check has run, then surface the result.  A mismatch means
+        # model.pkl has been swapped or corrupted since training; the
+        # rest of the audit still runs (so callers can compare against
+        # historical baselines) but the report prepends a CRITICAL
+        # recommendation and exposes the hash mismatch.
+        from fairness.names.classifier import get_classifier
+        _clf = get_classifier()
+        _clf._ensure_loaded()
+        _integrity_violated = bool(
+            getattr(_clf, "integrity_violated", False)
+        )
+
         # --- Phase 1: batched classifier call ---------------------------
         # Walk every resume once to collect the union of header tokens,
         # then invoke the calibrated classifier ONCE on the deduped
@@ -900,8 +914,26 @@ class BiasDetector:
             "score_distribution": {},
             "detection_coverage": {},
             "culture_distribution": {},
+            "integrity": {
+                # SHA-256 of the loaded model.pkl compared against the
+                # value recorded in model_card.json at training time.
+                # See fairness/names/classifier.py for the verification.
+                "model_integrity_violated": _integrity_violated,
+                "expected_sha256":          getattr(_clf, "expected_sha", None),
+                "actual_sha256":            getattr(_clf, "actual_sha", None),
+            },
             "recommendations": [],
         }
+
+        if _integrity_violated:
+            results["recommendations"].append(
+                f"[CRITICAL] Classifier integrity check FAILED. "
+                f"Expected SHA-256 starts with "
+                f"{(_clf.expected_sha or '?')[:16]}..., got "
+                f"{(_clf.actual_sha or '?')[:16]}.... The model file "
+                f"has been modified since training.  Audit verdicts "
+                f"below are computed from an UNVERIFIED classifier."
+            )
 
         # Detection coverage stats
         n_known = sum(len(v) for k, v in gender_groups.items() if k != "unknown")

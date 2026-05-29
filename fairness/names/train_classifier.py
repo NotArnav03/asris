@@ -244,12 +244,35 @@ def main() -> None:
     print(f"\nWrote model to {MODEL_OUT.relative_to(ROOT)} "
           f"({MODEL_OUT.stat().st_size / 1024:.1f} KB)")
 
+    # --- Model integrity hash ----------------------------------------
+    # Compute SHA-256 of the just-written pickle and record it in the
+    # model card.  At classifier load time the runtime recomputes the
+    # hash and compares; a mismatch indicates the model file has been
+    # swapped or corrupted in transit and the audit surfaces a CRITICAL
+    # recommendation.  See fairness/names/classifier.py for the check.
+    import hashlib
+    model_bytes = MODEL_OUT.read_bytes()
+    model_sha256 = hashlib.sha256(model_bytes).hexdigest()
+    model_size_bytes = len(model_bytes)
+    print(f"Model SHA-256: {model_sha256}")
+
     # --- Model card ---------------------------------------------------
     card = {
         "model":          "name-gender-classifier",
         "version":        "1.0.0",
         "trained_at":     datetime.now(timezone.utc).isoformat(),
         "random_state":   RANDOM_STATE,
+        "integrity": {
+            "sha256":        model_sha256,
+            "size_bytes":    model_size_bytes,
+            "verification":  (
+                "On classifier load, fairness/names/classifier.py "
+                "recomputes this hash and compares.  A mismatch sets "
+                "classifier.integrity_violated = True; audit_ranking_bias "
+                "then prepends a [CRITICAL] recommendation and exposes "
+                "an integrity block in the audit report."
+            ),
+        },
         "training_corpus": {
             "path":   "data/names/training_corpus.csv",
             "rows":   int(len(df)),

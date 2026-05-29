@@ -1,8 +1,13 @@
 {
   "model": "name-gender-classifier",
   "version": "1.0.0",
-  "trained_at": "2026-05-28T17:18:12.122145+00:00",
+  "trained_at": "2026-05-29T09:31:44.794892+00:00",
   "random_state": 20251128,
+  "integrity": {
+    "sha256": "23357d4f563bb9f9482bedc06dfa42c6ab18ff431824a44e6c3b34538bfa0804",
+    "size_bytes": 3303290,
+    "verification": "On classifier load, fairness/names/classifier.py recomputes this hash and compares.  A mismatch sets classifier.integrity_violated = True; audit_ranking_bias then prepends a [CRITICAL] recommendation and exposes an integrity block in the audit report."
+  },
   "training_corpus": {
     "path": "data/names/training_corpus.csv",
     "rows": 45230,
@@ -38,7 +43,7 @@
     "n_test": 9046,
     "split": "stratified by (culture, y) — see train_classifier.py",
     "sample_weighted": true,
-    "fit_seconds": 3.3
+    "fit_seconds": 5.2
   },
   "metrics": {
     "overall": {
