@@ -1413,6 +1413,73 @@ class TestBiasDetector:
         assert result["directional_air"] == 0.0
 
 
+    # --- Cutoff method decoupling (Task #7 / #42) ----------------------
+
+    def test_cutoff_method_median_is_default(self):
+        from fairness.bias_detector import BiasDetector
+        audit = BiasDetector().audit_ranking_bias(
+            {"a.txt": "John\nEng", "b.txt": "Priya\nEng"},
+            {"a.txt": 0.5, "b.txt": 0.9},
+        )
+        assert audit["cutoff_method"] == "median"
+
+    def test_cutoff_method_top_k_uses_rank_threshold(self):
+        from fairness.bias_detector import BiasDetector
+        scores = {f"r{i}.txt": 0.1 * i for i in range(10)}
+        texts = {k: "John Smith\nEng" for k in scores}
+        audit = BiasDetector().audit_ranking_bias(
+            texts, scores, cutoff_method="top_k", top_k=3,
+        )
+        assert audit["cutoff_method"] == "top_k"
+        assert audit["cutoff_top_k"] == 3
+        # Top 3 scores are 0.9, 0.8, 0.7 -> threshold = 0.7
+        assert abs(audit["cutoff_threshold"] - 0.7) < 1e-9
+
+    def test_cutoff_method_percentile_uses_score_percentile(self):
+        from fairness.bias_detector import BiasDetector
+        scores = {f"r{i}.txt": float(i) for i in range(101)}  # 0..100
+        texts = {k: "John\nEng" for k in scores}
+        audit = BiasDetector().audit_ranking_bias(
+            texts, scores, cutoff_method="percentile", percentile=10,
+        )
+        assert audit["cutoff_method"] == "percentile"
+        # Top 10% -> 90th percentile by score = 90.0
+        assert abs(audit["cutoff_threshold"] - 90.0) < 1.0
+
+    def test_cutoff_method_explicit_uses_given_threshold(self):
+        from fairness.bias_detector import BiasDetector
+        audit = BiasDetector().audit_ranking_bias(
+            {"a.txt": "John\nEng"}, {"a.txt": 0.5},
+            cutoff_method="explicit", selection_threshold=0.42,
+        )
+        assert audit["cutoff_method"] == "explicit"
+        assert audit["cutoff_threshold"] == 0.42
+
+    def test_cutoff_top_k_raises_without_top_k(self):
+        from fairness.bias_detector import BiasDetector
+        with pytest.raises(ValueError, match="top_k"):
+            BiasDetector().audit_ranking_bias(
+                {"a.txt": "John\nEng"}, {"a.txt": 0.5},
+                cutoff_method="top_k",
+            )
+
+    def test_cutoff_percentile_raises_with_bad_percentile(self):
+        from fairness.bias_detector import BiasDetector
+        with pytest.raises(ValueError, match="percentile"):
+            BiasDetector().audit_ranking_bias(
+                {"a.txt": "John\nEng"}, {"a.txt": 0.5},
+                cutoff_method="percentile", percentile=150,
+            )
+
+    def test_cutoff_explicit_raises_without_threshold(self):
+        from fairness.bias_detector import BiasDetector
+        with pytest.raises(ValueError, match="explicit"):
+            BiasDetector().audit_ranking_bias(
+                {"a.txt": "John\nEng"}, {"a.txt": 0.5},
+                cutoff_method="explicit",
+            )
+
+
     def test_dpd_uses_size_weighted_overall_rate_when_sizes_given(self):
         from fairness.bias_detector import BiasDetector
         # Unequal group sizes: A has 90, B has 10.  Rates A=0.5, B=0.9.

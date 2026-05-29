@@ -1432,6 +1432,9 @@ class BiasDetector:
         resume_texts: dict,
         scores: dict,
         selection_threshold: Optional[float] = None,
+        cutoff_method: str = "median",
+        top_k: Optional[int] = None,
+        percentile: Optional[float] = None,
         scorer=None,
         jd_text: Optional[str] = None,
         counterfactual_sample_size: int = 10,
@@ -1458,8 +1461,56 @@ class BiasDetector:
                 candidate triggers 16 scorer calls (8 male + 8 female
                 name swaps); the harness is cheap but not free.
         """
-        if selection_threshold is None:
-            selection_threshold = float(np.median(list(scores.values())))
+        # --- Cutoff resolution -----------------------------------------
+        # The recruiter's OPERATIONAL cutoff governs whose "selected"
+        # status the audit measures.  Four supported modes:
+        #
+        #   median       Selected = scores >= median(scores)   (default,
+        #                legacy behaviour; useful for "balanced 50/50"
+        #                pass/fail framing).
+        #   top_k        Selected = top-k by score (requires top_k=N).
+        #                Mirrors how recruiters actually use ranked lists.
+        #   percentile   Selected = scores >= p-th percentile
+        #                (requires percentile=0..100).
+        #   explicit     Selected = scores >= selection_threshold
+        #                (requires selection_threshold=float).
+        #
+        # All modes resolve to a single ``selection_threshold`` float
+        # internally so downstream code is unchanged.  The chosen method
+        # and its concrete threshold are surfaced in the audit report
+        # under ``cutoff_method``, ``cutoff_threshold``, ``cutoff_top_k``,
+        # and ``cutoff_percentile`` for full reviewer disclosure.
+        score_values = list(scores.values())
+        if not score_values:
+            cutoff_method = "median"  # nothing to do — degenerate
+        cutoff_top_k = None
+        cutoff_percentile = None
+        if cutoff_method == "top_k":
+            if top_k is None or top_k <= 0:
+                raise ValueError("cutoff_method='top_k' requires top_k > 0")
+            sorted_scores = sorted(score_values, reverse=True)
+            cutoff_top_k = min(int(top_k), len(sorted_scores))
+            # Threshold = the score AT rank top_k.  >= this is selected.
+            selection_threshold = float(sorted_scores[cutoff_top_k - 1])
+        elif cutoff_method == "percentile":
+            if percentile is None or not (0 <= percentile <= 100):
+                raise ValueError(
+                    "cutoff_method='percentile' requires percentile in [0, 100]"
+                )
+            cutoff_percentile = float(percentile)
+            selection_threshold = float(
+                np.percentile(score_values, 100 - percentile)
+            )
+        elif cutoff_method == "explicit":
+            if selection_threshold is None:
+                raise ValueError(
+                    "cutoff_method='explicit' requires selection_threshold=float"
+                )
+            selection_threshold = float(selection_threshold)
+        else:  # median
+            cutoff_method = "median"
+            if selection_threshold is None:
+                selection_threshold = float(np.median(score_values))
 
         # --- Phase 0: classifier integrity verification -----------------
         # Force the classifier to load (idempotent) so its integrity
@@ -1573,6 +1624,10 @@ class BiasDetector:
 
         results: dict = {
             "threshold": selection_threshold,
+            "cutoff_method":      cutoff_method,
+            "cutoff_threshold":   selection_threshold,
+            "cutoff_top_k":       cutoff_top_k,
+            "cutoff_percentile":  cutoff_percentile,
             "total_resumes": len(scores),
             "gender_distribution": {},
             "gender_bias_analysis": {},
