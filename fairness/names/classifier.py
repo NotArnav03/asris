@@ -68,6 +68,10 @@ SURNAMES_PATH = (
     Path(__file__).resolve().parent.parent.parent
     / "data" / "names" / "surnames.csv"
 )
+NICKNAMES_PATH = (
+    Path(__file__).resolve().parent.parent.parent
+    / "data" / "names" / "nicknames.csv"
+)
 MODEL_CARD_PATH = Path(__file__).resolve().parent / "model_card.json"
 
 # A corpus row is only used as a lookup fast-path if its training weight
@@ -244,15 +248,18 @@ class NameGenderClassifier:
         model_path: Path = MODEL_PATH,
         corpus_path: Path = CORPUS_PATH,
         surnames_path: Path = SURNAMES_PATH,
+        nicknames_path: Path = NICKNAMES_PATH,
         lookup_weight_floor: float = LOOKUP_WEIGHT_FLOOR,
     ) -> None:
         self._model_path = Path(model_path)
         self._corpus_path = Path(corpus_path)
         self._surnames_path = Path(surnames_path)
+        self._nicknames_path = Path(nicknames_path)
         self._lookup_weight_floor = lookup_weight_floor
         self._model = None
         self._lookup: dict[str, tuple[float, float, str]] = {}
         self._surnames: set = set()
+        self._nicknames: dict = {}   # nickname -> canonical
         self._load_lock = threading.Lock()
         self._loaded = False
         # Integrity verification — populated by _load_model.
@@ -275,8 +282,25 @@ class NameGenderClassifier:
                 return
             self._load_lookup()
             self._load_surnames()
+            self._load_nicknames()
             self._load_model()
             self._loaded = True
+
+    def _load_nicknames(self) -> None:
+        """Load the nickname -> canonical map from
+        data/names/nicknames.csv.  Missing file is non-fatal — the
+        classifier degrades to no-nickname-resolution.
+        """
+        if not self._nicknames_path.exists():
+            return
+        df = pd.read_csv(
+            self._nicknames_path, keep_default_na=False, na_values=[""],
+        )
+        for _, row in df.iterrows():
+            nick = _normalise(str(row.get("nickname", "")))
+            canon = _normalise(str(row.get("canonical", "")))
+            if nick and canon:
+                self._nicknames[nick] = canon
 
     def _load_surnames(self) -> None:
         """Load the surname denylist from data/names/surnames.csv.
@@ -397,8 +421,27 @@ class NameGenderClassifier:
         is_sur         = is_sur_joined or is_sur_parts
 
         hit = self._lookup.get(norm_strict) if norm_strict else None
+
+        # --- Nickname resolution -------------------------------------
+        # If the raw token is a known nickname, also resolve its
+        # canonical and compare lookup weights.  Many nicknames have
+        # WEAK direct corpus entries (Mike at weight 0.8) while the
+        # canonical has a strong one (Michael at 1.6) — we prefer
+        # the stronger attestation regardless of which form was used.
+        canon_hit = None
+        canonical = None
+        if norm_strict and norm_strict in self._nicknames:
+            canonical = self._nicknames[norm_strict]
+            canon_hit = self._lookup.get(canonical)
+
+        if hit is not None and canon_hit is not None:
+            if canon_hit[1] > hit[1]:
+                return canon_hit, canonical, is_sur
+            return hit, norm_strict, is_sur
         if hit is not None:
             return hit, norm_strict, is_sur
+        if canon_hit is not None:
+            return canon_hit, canonical, is_sur
 
         if not parts:
             return None, norm_strict, is_sur
@@ -408,10 +451,21 @@ class NameGenderClassifier:
         for p in parts:
             h = self._lookup.get(p)
             if h is None:
-                continue
+                # Also try the nickname canonical of this part.
+                canon = self._nicknames.get(p)
+                if canon:
+                    h = self._lookup.get(canon)
+                    if h is not None:
+                        p_check = canon
+                    else:
+                        continue
+                else:
+                    continue
+            else:
+                p_check = p
             if best_hit is None or h[1] > best_hit[1]:
                 best_hit = h
-                best_part = p
+                best_part = p_check
         if best_hit is not None:
             return best_hit, best_part, is_sur
         return None, norm_strict, is_sur

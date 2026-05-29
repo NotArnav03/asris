@@ -1399,6 +1399,54 @@ class TestNameClassifier:
         assert r["signals"]["female_name"] is True
 
 
+    # --- Nickname canonical mapping (Task #28) -------------------------
+
+    def test_bob_canonicalises_to_robert_male(self):
+        from fairness.names.classifier import predict
+        r = predict("Bob")
+        # Bob -> Robert (lookup hit p_female~0 == male)
+        assert r.p_female <= 0.15
+        assert r.source == "lookup"
+
+    def test_liz_canonicalises_to_elizabeth_female(self):
+        from fairness.names.classifier import predict
+        r = predict("Liz")
+        assert r.p_female >= 0.85
+        assert r.source == "lookup"
+
+    def test_mike_canonicalises_to_michael(self):
+        from fairness.names.classifier import predict
+        r = predict("Mike")
+        assert r.p_female <= 0.15
+
+    def test_beth_canonicalises_to_elizabeth(self):
+        from fairness.names.classifier import predict
+        r = predict("Beth")
+        assert r.p_female >= 0.85
+
+    def test_nickname_in_full_resume_header(self):
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "Bob Smith\nSenior Software Engineer"
+        )
+        assert r["signals"]["male_name"] is True
+        assert r["gender"] == "male"
+
+    def test_unisex_token_is_not_in_nickname_map(self):
+        # Cross-gender-ambiguous nicknames (Chris, Sam, Alex, Pat,
+        # Ronnie, Vivian) must NOT be canonicalised since the
+        # canonical itself differs by gender.  Guard against future
+        # CSV edits.
+        from fairness.names.classifier import get_classifier
+        clf = get_classifier()
+        clf._ensure_loaded()
+        for nick in ("chris", "sam", "alex", "pat", "ronnie", "ollie"):
+            assert nick not in clf._nicknames, (
+                f"{nick!r} is cross-gender ambiguous and must not "
+                f"be in nicknames.csv"
+            )
+
+
     def test_overall_calibration_target_met(self):
         # The model_card declares calibration_target.overall_meets_target.
         # If this regresses (e.g. someone re-trains with worse data),
