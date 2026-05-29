@@ -47,6 +47,7 @@ back to the old categorical form for code paths that still need it.
 from __future__ import annotations
 
 import pickle
+import re
 import threading
 from dataclasses import dataclass
 from functools import lru_cache
@@ -190,10 +191,42 @@ class NameGenderResult:
 
 def _normalise(name: str) -> str:
     """Lower-case and strip non-letter chars.  Returns '' for inputs
-    with no alphabetic content."""
+    with no alphabetic content.  Matches the canonical corpus key
+    format used in data/names/training_corpus.csv and surnames.csv."""
     if not name:
         return ""
     return "".join(ch for ch in name.lower() if ch.isalpha())
+
+
+# Splits a compound name on hyphens, apostrophes, whitespace, and
+# surname-particle boundaries.  Used by the classifier to resolve
+# "Smith-Jones" by parts when the joined form is OOV.
+_COMPOUND_SPLIT_RE = re.compile(r"[\-'\s]+")
+
+# Surname particles ignored when extracting the "main" name parts.
+# These appear in particle-prefixed surnames ("van der Berg",
+# "de la Cruz", "ben David", "abu Mazen", "al Khalil") and contribute
+# no per-token gender information.
+_SURNAME_PARTICLES: frozenset = frozenset({
+    "van", "der", "den", "de", "del", "della", "di", "da", "do", "dos",
+    "das", "le", "la", "les", "von", "zu", "zur", "af", "av", "ben",
+    "bin", "abu", "el", "al", "ibn", "mc", "mac", "fitz", "ap",
+})
+
+
+def _split_compound(name: str) -> list:
+    """Return the lower-cased alphabetic parts of a compound name,
+    excluding surname particles.  Empty for single-word inputs."""
+    if not name:
+        return []
+    raw_parts = _COMPOUND_SPLIT_RE.split(name.lower())
+    out = []
+    for raw in raw_parts:
+        norm = _normalise(raw)
+        if not norm or norm in _SURNAME_PARTICLES:
+            continue
+        out.append(norm)
+    return out
 
 
 # --- The classifier --------------------------------------------------------
@@ -325,62 +358,106 @@ class NameGenderClassifier:
     # ----- prediction ------------------------------------------------
 
     def predict(self, name: str) -> NameGenderResult:
-        """Predict P(female | name) for a single token."""
-        norm = _normalise(name)
-        if not norm:
-            return NameGenderResult(name="", p_female=0.5, source="empty")
-        return self._predict_normalised(norm)
+        """Predict P(female | name) for a single token.
 
-    def predict_many(self, names: list[str]) -> list[NameGenderResult]:
+        The raw name is forwarded into predict_many so compound names
+        (hyphenated, apostrophe-separated, particle-prefixed) get the
+        same compound-lookup resolution as the batch path."""
+        if not name or not _normalise(name):
+            return NameGenderResult(name="", p_female=0.5, source="empty")
+        return self.predict_many([name])[0]
+
+    def _resolve_compound_lookup(self, raw: str):
+        """Return (hit_tuple, name_used, all_surname) for a possibly-
+        compound name token.
+
+        Resolution priority:
+          1. Strict normalised form ("smithjones" if name is "Smith-Jones").
+          2. Each part of the compound split ("smith", "jones").  If
+             multiple parts hit the lookup, return the highest-weight one.
+          3. None if nothing hits.
+
+        ``all_surname`` is True iff every compound part is on the surname
+        denylist.  This is what feeds NameGenderResult.is_surname for
+        compound tokens — a single-name "Smith-Jones" with both parts on
+        the surname list is surname-only even though no joined-form
+        lookup exists.
+        """
+        norm_strict = _normalise(raw)
+        parts = _split_compound(raw)
+
+        # is_surname is True if EITHER the joined form OR every
+        # compound part is on the surname denylist.  Joined-form check
+        # is what catches "obrien" / "Smith-Jones" -> "smithjones"
+        # when both halves are real surnames.  Per-part check catches
+        # cases where the joined form is unattested but every part
+        # is a separately-listed surname.
+        is_sur_joined  = bool(norm_strict) and norm_strict in self._surnames
+        is_sur_parts   = bool(parts) and all(p in self._surnames for p in parts)
+        is_sur         = is_sur_joined or is_sur_parts
+
+        hit = self._lookup.get(norm_strict) if norm_strict else None
+        if hit is not None:
+            return hit, norm_strict, is_sur
+
+        if not parts:
+            return None, norm_strict, is_sur
+
+        best_hit = None
+        best_part = None
+        for p in parts:
+            h = self._lookup.get(p)
+            if h is None:
+                continue
+            if best_hit is None or h[1] > best_hit[1]:
+                best_hit = h
+                best_part = p
+        if best_hit is not None:
+            return best_hit, best_part, is_sur
+        return None, norm_strict, is_sur
+
+    def predict_many(self, names: list) -> list:
         """Batch interface.  Faster than calling ``predict`` in a loop
         because the model's predict_proba is amortised over the OOV
-        batch."""
+        batch.  Compound names (hyphenated, apostrophe-separated, or
+        particle-prefixed) are resolved via _resolve_compound_lookup."""
         self._ensure_loaded()
-        results: list[Optional[NameGenderResult]] = [None] * len(names)
-        oov_indices: list[int] = []
-        oov_names: list[str] = []
+        results: list = [None] * len(names)
+        oov_indices: list = []
+        oov_names: list = []
+        oov_all_surname: list = []
         for i, raw in enumerate(names):
-            norm = _normalise(raw)
-            if not norm:
+            if not raw or not _normalise(raw):
+                # No alphabetic content at all.
                 results[i] = NameGenderResult(name="", p_female=0.5, source="empty")
                 continue
-            is_sur = norm in self._surnames
-            hit = self._lookup.get(norm)
+            hit, name_used, all_surname = self._resolve_compound_lookup(raw)
             if hit is not None:
                 p_f, w, culture = hit
                 results[i] = NameGenderResult(
-                    name=norm, p_female=p_f, source="lookup",
-                    weight=w, culture=culture, is_surname=is_sur,
+                    name=name_used, p_female=p_f, source="lookup",
+                    weight=w, culture=culture, is_surname=all_surname,
                 )
             else:
                 oov_indices.append(i)
-                oov_names.append(norm)
+                oov_names.append(name_used)  # already normalised
+                oov_all_surname.append(all_surname)
         if oov_names:
             probs = self._model.predict_proba(oov_names)[:, 1]
-            for idx, norm, p in zip(oov_indices, oov_names, probs):
+            for idx, nm, p, is_sur in zip(
+                oov_indices, oov_names, probs, oov_all_surname,
+            ):
                 results[idx] = NameGenderResult(
-                    name=norm, p_female=float(p), source="model",
-                    is_surname=(norm in self._surnames),
+                    name=nm, p_female=float(p), source="model",
+                    is_surname=is_sur,
                 )
-        # mypy: every slot was filled above.
         return [r for r in results if r is not None]
 
     def _predict_normalised(self, norm: str) -> NameGenderResult:
-        self._ensure_loaded()
-        is_sur = norm in self._surnames
-        hit = self._lookup.get(norm)
-        if hit is not None:
-            p_f, w, culture = hit
-            return NameGenderResult(
-                name=norm, p_female=p_f, source="lookup",
-                weight=w, culture=culture, is_surname=is_sur,
-            )
-        # OOV — fall back to the model.
-        prob = self._model.predict_proba([norm])[0, 1]
-        return NameGenderResult(
-            name=norm, p_female=float(prob), source="model",
-            is_surname=is_sur,
-        )
+        # Delegate to predict_many to avoid duplicating the
+        # compound-resolution logic.  This path used to be the hot
+        # path but is now used only by predict() and predict_cached().
+        return self.predict_many([norm])[0]
 
     # ----- diagnostics -----------------------------------------------
 

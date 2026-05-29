@@ -398,10 +398,20 @@ class BiasDetector:
         for block in blocks:
             cands: list = []
             for raw in block.split():
-                cleaned = re.sub(r"[^A-Za-z]", "", raw)
+                # Keep hyphens and apostrophes INSIDE the token — these
+                # are part of legitimate names like "O'Brien",
+                # "Smith-Jones", "D'Angelo", "Anne-Marie".  Strip every
+                # other non-letter character.  Strip surrounding punct
+                # (commas / quotes from "Doe," / "'Mary'") to avoid
+                # spurious tokens.
+                cleaned = re.sub(r"[^A-Za-z'\-]", "", raw)
+                cleaned = cleaned.strip("'-")
                 if len(cleaned) < 2 or not cleaned[0].isupper():
                     continue
-                if cleaned.lower() in _RESUME_VOCAB_DENYLIST:
+                # Denylist check ignores hyphens/apostrophes — "Mr-Smith"
+                # (typo) should still be honorific-checked against "mr".
+                stripped = re.sub(r"[^a-z]", "", cleaned.lower())
+                if stripped in _RESUME_VOCAB_DENYLIST:
                     continue
                 cands.append(cleaned)
             strategy_lists.append(cands)
@@ -410,8 +420,16 @@ class BiasDetector:
     @staticmethod
     def _pick_name_signal(strategy_lists: list, results_by_token: dict):
         """Walk the cascade strategies against a precomputed
-        ``results_by_token`` map (keyed by lower-cased token).
+        ``results_by_token`` map (keyed by the LOWER-CASED INPUT FORM
+        of each candidate token, preserving hyphens / apostrophes).
         Returns ``(chosen, first_surname)`` — either may be None.
+
+        Keying by the input form (not the classifier's internal
+        ``result.name``) avoids a subtle bug: compound names like
+        "Smith-Jones" classify via a part lookup that emits
+        result.name="jones", but the cascade still sees the original
+        "Smith-Jones" token.  Dict lookup by result.name would miss;
+        keying by the input form aligns the two.
 
         Cascade STOPS at the first strategy that yields any candidates:
         a non-surname-only result becomes ``chosen``; if every result
@@ -566,13 +584,17 @@ class BiasDetector:
             # tokens only.  Slightly more overhead than the old direct
             # predict_many on the chosen strategy (we resolve every
             # cascade level upfront) but trivially small per resume.
+            #
+            # Key by the LOWER-CASED INPUT FORM (with hyphens / apostrophes
+            # preserved) so the cascade can look up "Anne-Marie" /
+            # "Smith-Jones" tokens directly.  See _pick_name_signal.
             from fairness.names.classifier import predict_many
             distinct = sorted({
                 t.lower() for cands in strategy_lists for t in cands
             })
             if distinct:
                 batch = predict_many(distinct)
-                results_by_token = {r.name: r for r in batch}
+                results_by_token = dict(zip(distinct, batch))
             else:
                 results_by_token = {}
 
@@ -856,8 +878,13 @@ class BiasDetector:
                 for t in cands:
                     token_union.add(t.lower())
         if token_union:
-            batch = predict_many(sorted(token_union))
-            results_by_token = {r.name: r for r in batch}
+            distinct = sorted(token_union)
+            batch = predict_many(distinct)
+            # Key by INPUT form (not result.name) so the cascade
+            # lookups in _pick_name_signal land — compound names like
+            # "Smith-Jones" have result.name="jones" via part lookup
+            # but the cascade still sees the original token.
+            results_by_token = dict(zip(distinct, batch))
         else:
             results_by_token = {}
 
