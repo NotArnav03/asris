@@ -268,6 +268,67 @@ def _extract_header_window(
     return "\n".join(kept)
 
 
+# --- Right-to-left (Arabic, Hebrew) honorifics ----------------------------
+# Pure-substring patterns rather than the strict-regex Latin pipeline:
+#
+#   1. Word-boundary semantics in Arabic / Hebrew are non-trivial (no
+#      space-separated word stems; compounds attach prefixes).  Sub-
+#      string matching on a salutation phrase is the standard approach.
+#
+#   2. We do NOT try to extract / classify the candidate's name from
+#      RTL scripts here.  The trained char-ngram classifier was fit
+#      on romanised forms; running it on raw Arabic / Hebrew tokens
+#      would produce uncalibrated probabilities.  Honorific signal
+#      alone is what we lift.
+#
+# Sources: salutation conventions documented in
+#   https://en.wikipedia.org/wiki/Arabic_honorifics
+#   https://en.wikipedia.org/wiki/Hebrew_honorifics
+_RTL_HONORIFICS: dict = {
+    "male": [
+        # Arabic
+        "السيد",  "السّيد",  "سيد",
+        # Hebrew
+        "מר", "אדון",
+    ],
+    "female": [
+        # Arabic
+        "السيدة",  "السّيدة",  "سيدة", "الآنسة", "آنسة",
+        # Hebrew
+        "מרת", "גברת", "העלמה",
+    ],
+    "neutral": [
+        # Arabic
+        "بروفيسور", "أستاذ", "الدكتور",
+        # Hebrew
+        "פרופ", "דוקטור",
+    ],
+}
+
+
+def _has_rtl_script(text: str) -> bool:
+    """True if the text contains any character in the Hebrew, Arabic,
+    Syriac, or Thaana Unicode blocks.  Used to decide whether to run
+    the RTL honorific scan in addition to the Latin scan."""
+    if not text:
+        return False
+    for c in text:
+        cp = ord(c)
+        if (0x0590 <= cp <= 0x05FF      # Hebrew
+                or 0x0600 <= cp <= 0x06FF   # Arabic
+                or 0x0700 <= cp <= 0x074F   # Syriac
+                or 0x0780 <= cp <= 0x07BF   # Thaana
+                or 0xFB1D <= cp <= 0xFDFF   # Hebrew/Arabic presentation
+                or 0xFE70 <= cp <= 0xFEFF):  # Arabic presentation B
+            return True
+    return False
+
+
+def _rtl_honorific_fires(honorifics: list, header: str) -> bool:
+    """Substring match for any RTL honorific in the header window."""
+    return any(h in header for h in honorifics)
+
+
 def _honorific_fires(pattern: re.Pattern, header_orig: str) -> bool:
     """Return True iff ``pattern`` matches inside ``header_orig`` with a
     follow-on token that (a) has an uppercase first character (Unicode-
@@ -612,6 +673,20 @@ class BiasDetector:
         signals["male_title"]    = _honorific_fires(_HONORIFIC_PATTERNS["male"],    header_orig)
         signals["female_title"]  = _honorific_fires(_HONORIFIC_PATTERNS["female"],  header_orig)
         signals["neutral_title"] = _honorific_fires(_HONORIFIC_PATTERNS["neutral"], header_orig)
+
+        # 2b. RTL honorific scan — Arabic / Hebrew salutations.  We
+        # OR into the existing signals so a resume with both Latin
+        # and RTL salutations produces signal from whichever fires.
+        # Name extraction from RTL scripts is NOT attempted; only the
+        # honorific signal is lifted (the classifier was trained on
+        # romanised forms).
+        if _has_rtl_script(header_orig):
+            if _rtl_honorific_fires(_RTL_HONORIFICS["male"], header_orig):
+                signals["male_title"] = True
+            if _rtl_honorific_fires(_RTL_HONORIFICS["female"], header_orig):
+                signals["female_title"] = True
+            if _rtl_honorific_fires(_RTL_HONORIFICS["neutral"], header_orig):
+                signals["neutral_title"] = True
 
         # 3. Name scan: classify the FIRST plausible name token in the
         # first two header lines through the calibrated name classifier.

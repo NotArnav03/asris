@@ -589,6 +589,67 @@ class TestBiasDetector:
         assert r["signals"]["male_title"] is True
 
 
+    # --- RTL / bidirectional honorifics (Task #29) ---------------------
+
+    def test_arabic_mr_honorific_fires_male_title(self):
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "السيد محمد\nمهندس برمجيات"   # "Mr. Mohammed\nSoftware Engineer"
+        )
+        assert r["signals"]["male_title"] is True
+
+    def test_arabic_mrs_honorific_fires_female_title(self):
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "السيدة فاطمة\nمحللة بيانات"   # "Mrs. Fatima\nData Analyst"
+        )
+        assert r["signals"]["female_title"] is True
+
+    def test_arabic_miss_honorific_fires_female_title(self):
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored("الآنسة نور\nطبيبة")
+        assert r["signals"]["female_title"] is True
+
+    def test_hebrew_mr_honorific_fires_male_title(self):
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "מר כהן\nמהנדס תוכנה"   # "Mr. Cohen\nSoftware Engineer"
+        )
+        assert r["signals"]["male_title"] is True
+
+    def test_hebrew_mrs_honorific_fires_female_title(self):
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "גברת לוי\nאנליסטית"   # "Mrs. Levy\nAnalyst"
+        )
+        assert r["signals"]["female_title"] is True
+
+    def test_arabic_professor_fires_neutral_title(self):
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "بروفيسور أحمد\nباحث في الذكاء الاصطناعي"
+        )
+        assert r["signals"]["neutral_title"] is True
+
+    def test_rtl_scan_idempotent_on_plain_ascii(self):
+        # Regression: pure ASCII input never triggers the RTL scan,
+        # so the signals must be identical to the Latin-only path.
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "Mr. Smith\nSoftware Engineer"
+        )
+        assert r["signals"]["male_title"] is True
+        # Just confirm no spurious other RTL-driven signal
+        assert r["signals"]["female_title"] is False
+
+    def test_has_rtl_script_detector(self):
+        from fairness.bias_detector import _has_rtl_script
+        assert _has_rtl_script("plain ASCII") is False
+        assert _has_rtl_script("السيد") is True       # Arabic
+        assert _has_rtl_script("מר") is True           # Hebrew
+        assert _has_rtl_script("Mixed السيد ASCII") is True
+
+
     def test_plain_ascii_unaffected_by_sanitisation(self):
         # Regression: NFKC/zero-width strip is idempotent on ASCII.
         # If this fails the sanitisation has a bug that ALSO affects
