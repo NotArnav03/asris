@@ -8,8 +8,6 @@ Usage:
 """
 
 import os
-import time
-from collections import defaultdict, deque
 from pathlib import Path
 from typing import Optional
 
@@ -17,8 +15,11 @@ import numpy as np
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
+from throttled import (
+    MemoryStore, RateLimiterType, Throttled, per_min,
+)
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -50,11 +51,32 @@ MAX_TOTAL_REQUEST_BYTES = int(
     os.getenv("FAIMR_MAX_TOTAL_BYTES", str(50 * 1024 * 1024))  # 50 MB
 )
 
-# Token-bucket rate limit: requests per window per IP.
-RATE_LIMIT_WINDOW_SECONDS = int(
-    os.getenv("FAIMR_RATE_LIMIT_WINDOW_SECONDS", "60")
-)
+# --- Rate limiting (throttled-py + GCRA) ---------------------------------
+# Default per-IP limit applied to any endpoint without a more specific
+# quota in _ENDPOINT_QUOTAS below.  60 requests / minute with a burst of 10
+# is the same effective ceiling as the prior in-process limiter but the
+# GCRA algorithm provides smoother enforcement (no thundering herd at
+# window boundaries) and proper Retry-After hints.
 RATE_LIMIT_REQUESTS = int(os.getenv("FAIMR_RATE_LIMIT_REQUESTS", "60"))
+RATE_LIMIT_BURST = int(os.getenv("FAIMR_RATE_LIMIT_BURST", "10"))
+
+# Trusted-proxy allowlist.  Comma-separated IPs of upstream load
+# balancers / reverse proxies we trust to set X-Forwarded-For.  When
+# the immediate peer is in this list the middleware honours the
+# X-Forwarded-For chain to find the originating client; otherwise
+# the immediate peer is used (so an arbitrary client cannot spoof
+# their source IP).
+_trusted_env = os.getenv("FAIMR_TRUSTED_PROXIES", "").strip()
+TRUSTED_PROXIES: frozenset = frozenset(
+    p.strip() for p in _trusted_env.split(",") if p.strip()
+)
+
+# Bypass-allowlist for monitoring / health-check IPs.  Requests from
+# these IPs skip the rate limit entirely.
+_allow_env = os.getenv("FAIMR_RATE_LIMIT_ALLOWLIST", "").strip()
+ALLOWLISTED_IPS: frozenset = frozenset(
+    p.strip() for p in _allow_env.split(",") if p.strip()
+)
 
 # Optional API key.  When set, every protected endpoint requires the
 # header "X-API-Key: <value>".  Empty string (default) disables auth.
@@ -82,32 +104,136 @@ app.add_middleware(
 )
 
 
-# --- Rate limiter middleware -----------------------------------------------
-# Sliding window per remote address.  Kept in-process (a single fastapi
-# worker); a production multi-worker deployment should use a shared
-# Redis backend, but the in-process limiter is enough to neutralise the
-# casual flood-attack vector documented in the security review.
-_rate_buckets: dict = defaultdict(deque)
+# --- Rate limiter middleware (throttled-py + GCRA) -----------------------
+# Replaces the in-process sliding-window deque with the Generic Cell
+# Rate Algorithm via the throttled-py library.  GCRA is the algorithm
+# used in production telecom rate limiters and is the modern default
+# for HTTP APIs: smooth (no boundary thundering herd), space-efficient
+# (one float of state per key), and gives an exact Retry-After hint
+# for every limited request.
+#
+# Backend is MemoryStore by default — for multi-worker / multi-instance
+# deployments swap _RATE_STORE construction to RedisStore so all
+# workers share a single keyspace.
+#
+# Per-endpoint quotas live in _ENDPOINT_QUOTAS below; the registry
+# builds one Throttled limiter per (endpoint, quota) lazily on first use.
+
+_RATE_STORE = MemoryStore()
+
+
+def _build_quota_map() -> dict:
+    """Per-path quota schedule.
+
+    Tight quotas on expensive endpoints (audit / rank-pdfs invoke the
+    full classifier + counterfactual pipeline), generous quotas on
+    cheap endpoints (health / stats are just dict reads), default for
+    anything else.
+    """
+    return {
+        "/health":          per_min(1000),
+        "/stats":           per_min(200),
+        "/cache/stats":     per_min(200),
+        "/audit":           per_min(10, burst=5),
+        "/rank-pdfs":       per_min(10, burst=5),
+        "/counterfactual":  per_min(30, burst=10),
+        "/rank":            per_min(60, burst=10),
+        "/explain":         per_min(60, burst=10),
+        "/upload-pdf":      per_min(60, burst=10),
+    }
+
+
+_ENDPOINT_QUOTAS = _build_quota_map()
+_DEFAULT_QUOTA = per_min(RATE_LIMIT_REQUESTS, burst=RATE_LIMIT_BURST)
+_LIMITERS: dict = {}
+
+
+def _get_limiter(path: str) -> Throttled:
+    """Return the cached Throttled instance for ``path`` (lazy build)."""
+    quota = _ENDPOINT_QUOTAS.get(path, _DEFAULT_QUOTA)
+    cache_key = path if path in _ENDPOINT_QUOTAS else "_default"
+    if cache_key not in _LIMITERS:
+        _LIMITERS[cache_key] = Throttled(
+            using=RateLimiterType.GCRA.value,
+            quota=quota,
+            store=_RATE_STORE,
+        )
+    return _LIMITERS[cache_key]
+
+
+def _resolve_client_ip(request: Request) -> str:
+    """Resolve the originating client IP.
+
+    Only honours X-Forwarded-For when the immediate peer is in
+    TRUSTED_PROXIES — otherwise an arbitrary client could spoof their
+    source IP and trivially bypass the rate limit by varying the
+    header.  The chain is walked from right to left, returning the
+    first non-trusted hop (= originating client).
+    """
+    peer = request.client.host if request.client else "unknown"
+    if peer not in TRUSTED_PROXIES:
+        return peer
+    xff = request.headers.get("X-Forwarded-For", "")
+    if not xff:
+        return peer
+    chain = [ip.strip() for ip in xff.split(",") if ip.strip()]
+    for ip in reversed(chain):
+        if ip not in TRUSTED_PROXIES:
+            return ip
+    # All hops are trusted -> use the first (originating) entry
+    return chain[0] if chain else peer
 
 
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
-    client_ip = (request.client.host if request.client else "unknown")
-    now = time.monotonic()
-    bucket = _rate_buckets[client_ip]
-    # Drop expired entries
-    while bucket and bucket[0] < now - RATE_LIMIT_WINDOW_SECONDS:
-        bucket.popleft()
-    if len(bucket) >= RATE_LIMIT_REQUESTS:
-        return HTMLResponse(
-            content=(
-                f"Rate limit exceeded: {RATE_LIMIT_REQUESTS} requests "
-                f"per {RATE_LIMIT_WINDOW_SECONDS}s.  Retry shortly."
-            ),
-            status_code=429,
+    path = request.url.path
+    client_ip = _resolve_client_ip(request)
+
+    if client_ip in ALLOWLISTED_IPS:
+        return await call_next(request)
+
+    limiter = _get_limiter(path)
+    key = f"{path}:{client_ip}"
+    result = limiter.limit(key, cost=1)
+
+    if result.limited:
+        retry_after = max(1, int(round(result.state.retry_after or 1)))
+        logger.info(
+            "rate_limited path=%s ip=%s retry_after=%ds remaining=%d",
+            path, client_ip, retry_after, result.state.remaining,
         )
-    bucket.append(now)
+        return JSONResponse(
+            status_code=429,
+            content={
+                "error":               "rate_limit_exceeded",
+                "message": (
+                    f"Rate limit exceeded for {path}.  Retry in "
+                    f"{retry_after}s."
+                ),
+                "retry_after_seconds": retry_after,
+                "limit":               result.state.limit,
+                "remaining":           result.state.remaining,
+            },
+            headers={
+                "Retry-After":       str(retry_after),
+                "X-RateLimit-Limit": str(result.state.limit),
+                "X-RateLimit-Remaining": str(result.state.remaining),
+                "X-RateLimit-Reset": str(
+                    int(round(result.state.reset_after or 0))
+                ),
+            },
+        )
+
     return await call_next(request)
+
+
+def _reset_rate_limiters() -> None:
+    """Test hook — clears the in-memory store and the per-endpoint
+    limiter cache.  Use between tests so a rate-limited test doesn't
+    leak into the next one's quota."""
+    global _RATE_STORE, _LIMITERS
+    _RATE_STORE = MemoryStore()
+    _LIMITERS = {}
 
 
 def require_api_key(request: Request) -> None:

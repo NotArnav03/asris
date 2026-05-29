@@ -2570,6 +2570,111 @@ class TestApiHardening:
         )
         assert resp.status_code == 413
 
+    # --- Rate limiter (Task #46 — throttled-py GCRA) -------------------
+
+    def _client_with_reset(self):
+        from fastapi.testclient import TestClient
+        from api.server import app, _reset_rate_limiters
+        _reset_rate_limiters()
+        return TestClient(app)
+
+    def test_rate_limit_429_includes_retry_after_header(self):
+        client = self._client_with_reset()
+        # /audit quota is 10/min with burst=5.  Flood until limited.
+        limited_response = None
+        for _ in range(30):
+            r = client.post(
+                "/audit",
+                json={"jd_text": "role",
+                      "resume_texts": {"a.txt": "John\nEng"}},
+            )
+            if r.status_code == 429:
+                limited_response = r
+                break
+        assert limited_response is not None, "/audit should rate-limit"
+        assert "Retry-After" in limited_response.headers
+        assert int(limited_response.headers["Retry-After"]) >= 1
+
+    def test_rate_limit_429_body_has_machine_readable_schema(self):
+        client = self._client_with_reset()
+        limited = None
+        for _ in range(30):
+            r = client.post(
+                "/audit",
+                json={"jd_text": "role",
+                      "resume_texts": {"a.txt": "John\nEng"}},
+            )
+            if r.status_code == 429:
+                limited = r
+                break
+        assert limited is not None
+        body = limited.json()
+        for key in ("error", "message", "retry_after_seconds",
+                    "limit", "remaining"):
+            assert key in body
+        assert body["error"] == "rate_limit_exceeded"
+
+    def test_health_has_higher_quota_than_audit(self):
+        # /health quota is 1000/min; we should be able to call it many
+        # times without hitting 429 even if /audit is already limited.
+        client = self._client_with_reset()
+        for _ in range(50):
+            r = client.get("/health")
+            assert r.status_code == 200, (
+                "/health should never rate-limit at 50 calls/min"
+            )
+
+    def test_per_endpoint_quotas_are_isolated(self):
+        # Saturating /audit should NOT prevent calls to /rank or /health.
+        client = self._client_with_reset()
+        # Push /audit past its burst+rate.
+        for _ in range(20):
+            client.post(
+                "/audit",
+                json={"jd_text": "role",
+                      "resume_texts": {"a.txt": "John\nEng"}},
+            )
+        # /health is on a separate limiter and should still pass.
+        assert client.get("/health").status_code == 200
+
+    def test_trusted_proxy_xff_resolution(self, monkeypatch):
+        # When the immediate peer is in TRUSTED_PROXIES the middleware
+        # honours X-Forwarded-For for rate-limit keying.
+        monkeypatch.setenv("FAIMR_TRUSTED_PROXIES", "127.0.0.1")
+        import importlib, api.server
+        importlib.reload(api.server)
+        from fastapi.testclient import TestClient
+        client = TestClient(api.server.app)
+        # Two different "originating" IPs should each get their own bucket.
+        # With a generous endpoint like /health we won't actually hit the
+        # limit but we exercise the resolution path.
+        r1 = client.get("/health", headers={"X-Forwarded-For": "1.1.1.1"})
+        r2 = client.get("/health", headers={"X-Forwarded-For": "2.2.2.2"})
+        assert r1.status_code == 200
+        assert r2.status_code == 200
+        monkeypatch.delenv("FAIMR_TRUSTED_PROXIES", raising=False)
+        importlib.reload(api.server)
+
+    def test_allowlist_bypasses_rate_limit(self, monkeypatch):
+        # The test client's source IP is "testclient"; we add it to
+        # the allowlist and verify even an /audit flood succeeds.
+        monkeypatch.setenv("FAIMR_RATE_LIMIT_ALLOWLIST", "testclient")
+        import importlib, api.server
+        importlib.reload(api.server)
+        from fastapi.testclient import TestClient
+        client = TestClient(api.server.app)
+        # 30 calls without hitting 429.
+        for _ in range(30):
+            r = client.post(
+                "/audit",
+                json={"jd_text": "role",
+                      "resume_texts": {"a.txt": "John\nEng"}},
+            )
+            assert r.status_code != 429
+        monkeypatch.delenv("FAIMR_RATE_LIMIT_ALLOWLIST", raising=False)
+        importlib.reload(api.server)
+
+
     def test_api_key_required_when_set(self, monkeypatch):
         # Set env BEFORE re-import so the module captures it.  We use
         # importlib.reload because api.server reads os.getenv at module
