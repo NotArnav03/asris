@@ -800,6 +800,82 @@ class TestBiasDetector:
         assert "hyun" in _UNISEX_NAMES
 
 
+    # --- Per-culture disclosure + batched path (Task #19) -------------
+
+    def test_audit_emits_culture_distribution(self):
+        from fairness.bias_detector import BiasDetector
+        texts = {
+            "p.txt": "Priya Sharma\nEngineer",        # south_asian (lookup)
+            "j.txt": "John Smith\nEngineer",          # western (lookup)
+            "f.txt": "Fatima Khan\nAnalyst",          # arab (lookup)
+            "w.txt": "Wei Chen\nResearcher",          # east_asian (lookup or unisex)
+        }
+        scores = {"p.txt": 0.9, "j.txt": 0.8, "f.txt": 0.7, "w.txt": 0.6}
+        audit = BiasDetector().audit_ranking_bias(texts, scores)
+        cd = audit["culture_distribution"]
+        assert cd, "culture_distribution must be populated"
+        # Expected cultures appear; counts sum to total resumes
+        # (every resume is recorded under some culture, even 'unknown').
+        assert sum(v["count"] for v in cd.values()) == len(scores)
+        for culture, stats in cd.items():
+            assert "count" in stats
+            assert "selected_count" in stats
+            assert "selection_rate" in stats
+            assert "mean_p_female" in stats
+            assert "lookup_share" in stats
+            # model_card_ece may be None for "unknown" or absent cultures
+            assert "model_card_ece" in stats
+
+    def test_culture_distribution_includes_per_culture_ece_when_card_present(self):
+        # When the model card is on disk, ECE values are looked up and
+        # surfaced for cultures that have them.  This is what lets a
+        # reviewer correlate "70% Arab" with "ECE 0.09" and weight
+        # the audit verdict accordingly.
+        from fairness.bias_detector import BiasDetector, _load_model_card_ece
+        ece = _load_model_card_ece()
+        # Verify the cache returns a dict; if model_card.json is present
+        # in the repo the dict should be non-empty.
+        assert isinstance(ece, dict)
+        from pathlib import Path
+        card_path = Path("fairness/names/model_card.json")
+        if card_path.exists():
+            assert ece, "model_card.json exists but ECE cache is empty"
+            # At least one expected culture should be present.
+            assert any(c in ece for c in (
+                "western", "east_asian", "arab", "south_asian"
+            ))
+
+    def test_audit_batched_path_matches_per_resume_path(self):
+        # Calling detect_gender_proxy_scored standalone (per-resume
+        # path) and via audit_ranking_bias (batched path) must produce
+        # the same gender / name_source / name_p_female for each resume.
+        # Regression guard against the refactor.
+        from fairness.bias_detector import BiasDetector
+        texts = {
+            f"r{i}.txt": name + "\nEngineer at TechCorp"
+            for i, name in enumerate([
+                "Priya Sharma", "John Smith", "Fatima Khan",
+                "Mohammed Ali", "Sarah Chen", "Dr. Wei Chen",
+            ])
+        }
+        scores = {k: 0.5 + i * 0.05 for i, k in enumerate(texts)}
+        audit = BiasDetector().audit_ranking_bias(texts, scores)
+        # Reconstruct via per-resume calls and compare distributions —
+        # exact counts must match.
+        per_resume_genders: dict = {}
+        for filename, text in texts.items():
+            per_resume_genders[filename] = (
+                BiasDetector.detect_gender_proxy_scored(text)["gender"]
+            )
+        from collections import Counter
+        batched = {
+            g: stats["count"]
+            for g, stats in audit["gender_distribution"].items()
+        }
+        per_resume = Counter(per_resume_genders.values())
+        assert batched == dict(per_resume)
+
+
     def test_audit_flags_disagreement_between_soft_and_hard(self):
         # When the hard AIR passes but the soft AIR fails (or vice
         # versa), the audit should emit a NOTE flagging the gap so

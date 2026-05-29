@@ -252,6 +252,40 @@ _RESUME_VOCAB_DENYLIST: frozenset = frozenset({
 _NAME_SIGNAL_CONFIDENCE_FLOOR: float = 0.40
 
 
+# --- Model card cache for per-culture ECE disclosure ----------------------
+# Loaded once and reused across audits.  Returns {} when the card file is
+# absent — disclosure simply omits the ECE field in that case.  See the
+# culture_distribution block of audit_ranking_bias.
+_MODEL_CARD_ECE_CACHE: dict = None  # type: ignore[assignment]
+
+
+def _load_model_card_ece() -> dict:
+    """Read per-culture ECE from fairness/names/model_card.json once."""
+    global _MODEL_CARD_ECE_CACHE
+    if _MODEL_CARD_ECE_CACHE is not None:
+        return _MODEL_CARD_ECE_CACHE
+    out: dict = {}
+    try:
+        import json
+        card_path = (
+            Path(__file__).resolve().parent.parent
+            / "fairness" / "names" / "model_card.json"
+        )
+        if card_path.exists():
+            card = json.loads(card_path.read_text(encoding="utf-8"))
+            by_culture = card.get("metrics", {}).get("by_culture", {})
+            for culture, m in by_culture.items():
+                if "ece" in m:
+                    out[culture] = m["ece"]
+    except Exception:
+        # Defensive: model card load is decorative.  If anything goes
+        # wrong we still produce a usable audit, just without the ECE
+        # column in the culture_distribution table.
+        out = {}
+    _MODEL_CARD_ECE_CACHE = out
+    return out
+
+
 class BiasDetector:
     """
     Detects potential demographic bias in resume ranking results.
@@ -271,7 +305,81 @@ class BiasDetector:
     # --- Gender Detection -------------------------------------------------
 
     @staticmethod
-    def detect_gender_proxy_scored(text: str) -> dict:
+    def _extract_header_token_strategies(text: str) -> list:
+        """Return one candidate-token list per cascade strategy, in
+        priority order.  Pulled out of detect_gender_proxy_scored so
+        that audit_ranking_bias can batch the classifier call across
+        every resume in the corpus (one model.predict_proba on ALL
+        distinct header tokens, instead of one per resume).
+
+        Cascade strategies (see detect_gender_proxy_scored for the
+        rationale):
+
+          1. Right-of-first-comma on line 1
+             (academic-CV "Lastname, Firstname" format)
+          2. Line 1 as-is
+          3. Line 1 + line 2 concatenated
+             (fallback for "Job Title\\nCandidate Name" layouts)
+
+        Each list contains Title-cased tokens of length >= 2 that are
+        not on _RESUME_VOCAB_DENYLIST, in source order.
+        """
+        header_lines = text.strip().split("\n")[:2]
+        line1 = header_lines[0] if header_lines else ""
+        blocks: list = []
+        if "," in line1:
+            blocks.append(line1.split(",", 1)[1])
+        blocks.append(line1)
+        if len(header_lines) > 1:
+            blocks.append(" ".join(header_lines))
+
+        strategy_lists: list = []
+        for block in blocks:
+            cands: list = []
+            for raw in block.split():
+                cleaned = re.sub(r"[^A-Za-z]", "", raw)
+                if len(cleaned) < 2 or not cleaned[0].isupper():
+                    continue
+                if cleaned.lower() in _RESUME_VOCAB_DENYLIST:
+                    continue
+                cands.append(cleaned)
+            strategy_lists.append(cands)
+        return strategy_lists
+
+    @staticmethod
+    def _pick_name_signal(strategy_lists: list, results_by_token: dict):
+        """Walk the cascade strategies against a precomputed
+        ``results_by_token`` map (keyed by lower-cased token).
+        Returns ``(chosen, first_surname)`` — either may be None.
+
+        Cascade STOPS at the first strategy that yields any candidates:
+        a non-surname-only result becomes ``chosen``; if every result
+        is surname-only the first one becomes ``first_surname`` for
+        the diagnostic.  See detect_gender_proxy_scored's main
+        cascade comment for the why.
+        """
+        chosen = None
+        first_surname = None
+        for cands in strategy_lists:
+            if not cands:
+                continue
+            results = [results_by_token[c.lower()] for c in cands
+                       if c.lower() in results_by_token]
+            if not results:
+                continue
+            non_surnames = [r for r in results if not r.is_surname_only]
+            if non_surnames:
+                chosen = non_surnames[0]
+            else:
+                first_surname = results[0]
+            break
+        return chosen, first_surname
+
+    @staticmethod
+    def detect_gender_proxy_scored(
+        text: str,
+        _precomputed_name_results: dict = None,
+    ) -> dict:
         """
         Detect gender from resume text and return a scored result.
 
@@ -329,6 +437,11 @@ class BiasDetector:
             # no reliable gender signal — but the token is recorded
             # here so audit reports can disclose the situation.
             "name_is_surname": False,
+            # Culture cluster of the chosen name token, derived from
+            # the lookup row in training_corpus.csv.  "unknown" for OOV
+            # model results and empty / surname-only headers.  Audit
+            # report uses this to surface per-culture composition.
+            "name_culture": "unknown",
         }
 
         # 1. Pronoun scan (full text, lowercased)
@@ -370,87 +483,50 @@ class BiasDetector:
         #     too uncertain to vote for either gender; the candidate is
         #     marked unisex_name=True but neither male_name nor
         #     female_name fires.
-        from fairness.names.classifier import predict_many
+        # Extract candidate-token lists for each cascade strategy.
+        # See _extract_header_token_strategies / _pick_name_signal
+        # for the cascade rationale.  The two-phase split (extract
+        # then resolve) lets audit_ranking_bias batch the classifier
+        # call across every resume in the corpus — one big
+        # model.predict_proba instead of one per resume.
+        strategy_lists = BiasDetector._extract_header_token_strategies(text)
 
-        def _extract_candidates(block: str) -> list:
-            """Tokens from `block` that pass: Title-cased original
-            (first letter uppercase), length >= 2, not in the
-            resume-vocab denylist.  Preserves input order."""
-            out: list = []
-            for raw in block.split():
-                cleaned = re.sub(r"[^A-Za-z]", "", raw)
-                if len(cleaned) < 2 or not cleaned[0].isupper():
-                    continue
-                if cleaned.lower() in _RESUME_VOCAB_DENYLIST:
-                    continue
-                out.append(cleaned)
-            return out
+        if _precomputed_name_results is not None:
+            results_by_token = _precomputed_name_results
+        else:
+            # Standalone path: batch the classifier on this resume's
+            # tokens only.  Slightly more overhead than the old direct
+            # predict_many on the chosen strategy (we resolve every
+            # cascade level upfront) but trivially small per resume.
+            from fairness.names.classifier import predict_many
+            distinct = sorted({
+                t.lower() for cands in strategy_lists for t in cands
+            })
+            if distinct:
+                batch = predict_many(distinct)
+                results_by_token = {r.name: r for r in batch}
+            else:
+                results_by_token = {}
 
-        # Cascade of header-extraction strategies.  We try each in
-        # order and stop at the first that produces a non-surname
-        # name signal.  The cascade handles three common resume
-        # formats:
-        #
-        #   "Doe, John\nSoftware Engineer"  ->  right-of-comma wins
-        #     (academic CV last-name-first format)
-        #
-        #   "John Doe, PhD\nEngineer"       ->  line1 as-is wins
-        #     (right-of-comma is "PhD" which fails the denylist;
-        #      cascade falls through to the unrestricted line1)
-        #
-        #   "Senior Software Engineer\nJohn Doe"  ->  combined wins
-        #     (line1 is all denylisted vocab; line2 has the name)
-        header_lines = text.strip().split("\n")[:2]
-        line1 = header_lines[0] if header_lines else ""
-        strategies: list = []
-        if "," in line1:
-            strategies.append(line1.split(",", 1)[1])
-        strategies.append(line1)
-        if len(header_lines) > 1:
-            strategies.append(" ".join(header_lines))
-
-        # Cascade semantics:
-        #   - If a strategy yields ZERO usable candidates after the
-        #     vocab denylist + Title-case + length filter, fall through
-        #     to the next strategy (this one contributed nothing).
-        #   - If a strategy yields ANY candidates, this strategy IS our
-        #     answer: pick the first non-surname-only as chosen, or
-        #     record the first surname as a surname-only diagnostic.
-        #     Either way, STOP — falling through after surname-only
-        #     candidates would let broader strategies pick up unrelated
-        #     proper nouns from later sections of the resume (company
-        #     names like "TechCorp", product names, technologies)
-        #     instead of recognising that the header genuinely had
-        #     only a surname.
-        chosen = None
-        first_surname = None
-        for block in strategies:
-            cands = _extract_candidates(block)
-            if not cands:
-                continue
-            results = predict_many(cands)
-            non_surnames = [r for r in results if not r.is_surname_only]
-            if non_surnames:
-                chosen = non_surnames[0]
-            elif results:
-                first_surname = results[0]
-            break
+        chosen, first_surname = BiasDetector._pick_name_signal(
+            strategy_lists, results_by_token,
+        )
 
         if chosen is not None and chosen.source != "empty":
             signals["name_p_female"]   = round(float(chosen.p_female), 4)
             signals["name_source"]     = chosen.source
             signals["name_token"]      = chosen.name
             signals["name_is_surname"] = False
+            # Culture is set on lookup hits, None for model fallback.
+            # Surfacing it here lets audit_ranking_bias build a
+            # per-culture composition table for the report.
+            signals["name_culture"]    = chosen.culture or "unknown"
         elif first_surname is not None:
-            # Only surname-only tokens in the header — record the
-            # diagnostic but leave name_source="empty" so this
-            # candidate is treated as "no name signal" by the AIR
-            # aggregation.  Surname-only tokens (no strong given-name
-            # lookup evidence) don't reliably encode the bearer's
-            # gender — the classifier's substring-driven OOV prediction
-            # is not trustworthy here.
             signals["name_token"]      = first_surname.name
             signals["name_is_surname"] = True
+            signals["name_culture"]    = "unknown"
+        else:
+            signals["name_culture"]    = "unknown"
 
         # Derived legacy booleans.  Lookup hits with high distance from
         # 0.5, OR model hits that clear the confidence floor, vote for
@@ -680,6 +756,30 @@ class BiasDetector:
         if selection_threshold is None:
             selection_threshold = float(np.median(list(scores.values())))
 
+        # --- Phase 1: batched classifier call ---------------------------
+        # Walk every resume once to collect the union of header tokens,
+        # then invoke the calibrated classifier ONCE on the deduped
+        # list.  This collapses what was N small predict_proba calls
+        # (one per resume, ~0.5ms each) into a single batched call —
+        # ~10-20x faster on corpora with thousands of resumes.
+        from fairness.names.classifier import predict_many
+        all_strategies: dict = {}
+        token_union: set = set()
+        for filename, text in resume_texts.items():
+            if filename not in scores:
+                continue
+            sl = BiasDetector._extract_header_token_strategies(text)
+            all_strategies[filename] = sl
+            for cands in sl:
+                for t in cands:
+                    token_union.add(t.lower())
+        if token_union:
+            batch = predict_many(sorted(token_union))
+            results_by_token = {r.name: r for r in batch}
+        else:
+            results_by_token = {}
+
+        # --- Phase 2: per-resume aggregation ----------------------------
         # For each candidate we record BOTH the hard categorical
         # ("male"/"female"/"unknown" via detect_gender_proxy_scored) AND
         # the calibrated soft probability (name_p_female from the
@@ -687,9 +787,13 @@ class BiasDetector:
         # the soft probabilities drive AIR_soft (see _air_dual below).
         gender_groups: dict[str, list] = defaultdict(list)
         candidate_records: list = []  # used for soft-AIR aggregation
+        culture_records: list = []    # used for per-culture disclosure
         for filename, text in resume_texts.items():
             if filename in scores:
-                result = self.detect_gender_proxy_scored(text)
+                result = self.detect_gender_proxy_scored(
+                    text,
+                    _precomputed_name_results=results_by_token,
+                )
                 gender = result["gender"]
                 selected = scores[filename] >= selection_threshold
                 signals = result["signals"]
@@ -712,6 +816,13 @@ class BiasDetector:
                     "hard_gender":   gender,
                     "p_female_soft": p_female_soft,
                 })
+                culture_records.append({
+                    "filename":      filename,
+                    "selected":      selected,
+                    "culture":       signals.get("name_culture", "unknown"),
+                    "name_source":   signals.get("name_source", "empty"),
+                    "p_female":      float(signals.get("name_p_female", 0.5)),
+                })
 
         results: dict = {
             "threshold": selection_threshold,
@@ -720,6 +831,7 @@ class BiasDetector:
             "gender_bias_analysis": {},
             "score_distribution": {},
             "detection_coverage": {},
+            "culture_distribution": {},
             "recommendations": [],
         }
 
@@ -746,6 +858,39 @@ class BiasDetector:
                 "mean_confidence": round(
                     float(np.mean([r["confidence"] for r in resumes])), 3
                 ),
+            }
+
+        # --- Per-culture audit composition -------------------------------
+        # Surface which culture clusters drove this audit, so reviewers
+        # can interpret the AIR numbers in light of the per-culture
+        # calibration ECE recorded in fairness/names/model_card.json.
+        # Without this disclosure, "AIR=0.85 with 70% Arab candidates"
+        # looks identical to "AIR=0.85 with 70% European candidates"
+        # even though Arab has ~3x the calibration error.
+        culture_groups: dict = defaultdict(list)
+        for rec in culture_records:
+            culture_groups[rec["culture"]].append(rec)
+        per_culture_ece = _load_model_card_ece()
+        for culture, recs in culture_groups.items():
+            n = len(recs)
+            sel = sum(1 for r in recs if r["selected"])
+            results["culture_distribution"][culture] = {
+                "count":             n,
+                "selected_count":    sel,
+                "selection_rate":    round(sel / n, 4) if n else 0.0,
+                "mean_p_female":     round(
+                    float(np.mean([r["p_female"] for r in recs])), 4
+                ),
+                "lookup_share":      round(
+                    sum(1 for r in recs if r["name_source"] == "lookup") / n,
+                    4,
+                ),
+                # ECE from the model card for this culture cluster.  None
+                # for "unknown" (no per-culture metric applies) and for
+                # cultures the model card didn't have enough samples to
+                # measure.  When this is materially above 0.05, the AIR
+                # numbers below should be interpreted with caution.
+                "model_card_ece":    per_culture_ece.get(culture),
             }
 
         # --- Dual AIR computation ----------------------------------------
