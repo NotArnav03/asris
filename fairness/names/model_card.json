@@ -1,8 +1,12 @@
 {
   "model": "name-gender-classifier",
-  "version": "1.0.0",
-  "trained_at": "2026-05-29T10:59:05.530677+00:00",
+  "version": "1.0.1",
+  "trained_at": "2026-05-29T15:54:21.984853+00:00",
   "random_state": 20251128,
+  "lineage": {
+    "previous_version": "1.0.0",
+    "previous_sha256": "0331ebc090f9c9effe033b9d8cd875d42ab00104ea259d5d85519175e9abafcb"
+  },
   "integrity": {
     "sha256": "0331ebc090f9c9effe033b9d8cd875d42ab00104ea259d5d85519175e9abafcb",
     "size_bytes": 4653506,
@@ -71,7 +75,7 @@
     "n_test": 9046,
     "split": "stratified by (culture, y) — see train_classifier.py",
     "sample_weighted": true,
-    "fit_seconds": 0.0
+    "fit_seconds": 0.1
   },
   "metrics": {
     "overall": {

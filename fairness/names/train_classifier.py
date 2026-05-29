@@ -463,6 +463,44 @@ def main() -> None:
                 f"Refusing to ship an accuracy regression."
             )
 
+    # --- Version bump + previous-hash capture ------------------------
+    # Read the existing model card (if any) and decide a semver bump:
+    #   minor +1 when the pipeline hyperparams differ from the prior run,
+    #   patch +1 when they match (a pure retrain).
+    # Major bumps are manual (architecture changes).
+    prev_version = None
+    prev_sha = None
+    bumped_version = "1.0.0"
+    if CARD_OUT.exists():
+        try:
+            prev_card = json.loads(CARD_OUT.read_text(encoding="utf-8"))
+            prev_version = prev_card.get("version")
+            prev_sha = prev_card.get("integrity", {}).get("sha256")
+            prev_hp = prev_card.get("pipeline", {})
+            new_hp_signature = {
+                "ngram_range": list(chosen_ngram),
+                "min_df":      chosen_min_df,
+                "C":           chosen_C,
+            }
+            prev_hp_signature = {
+                "ngram_range": prev_hp.get("vectorizer", {}).get("ngram_range"),
+                "min_df":      prev_hp.get("vectorizer", {}).get("min_df"),
+                "C":           prev_hp.get("gender_classifier", {}).get("C"),
+            }
+            hp_changed = new_hp_signature != prev_hp_signature
+            try:
+                major, minor, patch = [int(x) for x in prev_version.split(".")]
+                if hp_changed:
+                    minor += 1
+                    patch = 0
+                else:
+                    patch += 1
+                bumped_version = f"{major}.{minor}.{patch}"
+            except Exception:
+                bumped_version = prev_version or "1.0.0"
+        except Exception:
+            pass
+
     MODEL_OUT.parent.mkdir(parents=True, exist_ok=True)
     with MODEL_OUT.open("wb") as fh:
         pickle.dump(pipeline, fh, protocol=pickle.HIGHEST_PROTOCOL)
@@ -484,9 +522,13 @@ def main() -> None:
     # --- Model card ---------------------------------------------------
     card = {
         "model":          "name-gender-classifier",
-        "version":        "1.0.0",
+        "version":        bumped_version,
         "trained_at":     datetime.now(timezone.utc).isoformat(),
         "random_state":   RANDOM_STATE,
+        "lineage": {
+            "previous_version": prev_version,
+            "previous_sha256":  prev_sha,
+        },
         "integrity": {
             "sha256":        model_sha256,
             "size_bytes":    model_size_bytes,

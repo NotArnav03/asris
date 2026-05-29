@@ -1752,6 +1752,24 @@ class TestNameClassifier:
         assert isinstance(clf._model, CulturalCalibratedClassifier)
 
 
+    # --- Semver lineage (Task #35) -------------------------------------
+
+    def test_model_card_has_version_and_lineage(self):
+        import json
+        from pathlib import Path
+        card = json.loads(
+            Path("fairness/names/model_card.json").read_text(encoding="utf-8")
+        )
+        assert "version" in card
+        parts = card["version"].split(".")
+        assert len(parts) == 3 and all(p.isdigit() for p in parts)
+        assert "lineage" in card
+        # previous_version may be None for the first ever train but the
+        # field must exist for traceability.
+        assert "previous_version" in card["lineage"]
+        assert "previous_sha256" in card["lineage"]
+
+
     def test_overall_calibration_target_met(self):
         # The model_card declares calibration_target.overall_meets_target.
         # If this regresses (e.g. someone re-trains with worse data),
