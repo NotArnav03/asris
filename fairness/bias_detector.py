@@ -464,6 +464,124 @@ _RESUME_VOCAB_DENYLIST: frozenset = frozenset({
 # uncertain about this token to bias the categorical decision.
 _NAME_SIGNAL_CONFIDENCE_FLOOR: float = 0.40
 
+
+# --- Language detection + per-locale resume vocab -------------------------
+# The default _RESUME_VOCAB_DENYLIST is English.  A Spanish, French,
+# German, Portuguese, or Italian resume with locale-specific section
+# headers and job-title vocabulary needs its own denylist or those
+# tokens leak into the classifier as OOV "names".
+#
+# Detection is a lightweight stop-word frequency heuristic — counts
+# the occurrences of ~15 stopwords per language in the resume body,
+# picks the language with the most matches (minimum 3 to claim
+# anything other than English).  No external dependency.
+_LANGUAGE_STOPWORDS: dict = {
+    "en": frozenset({
+        "the", "and", "of", "to", "in", "for", "with", "at", "from",
+        "by", "on", "as", "an", "is", "was", "are", "were",
+    }),
+    "es": frozenset({
+        "el", "la", "los", "las", "y", "de", "en", "para", "con",
+        "por", "del", "que", "una", "un", "es", "son", "como",
+    }),
+    "fr": frozenset({
+        "le", "la", "les", "et", "de", "du", "des", "en", "pour",
+        "avec", "par", "sur", "que", "une", "un", "est", "sont",
+    }),
+    "de": frozenset({
+        "der", "die", "das", "und", "in", "von", "mit", "bei",
+        "für", "auf", "ein", "eine", "ist", "sind", "zu", "auch",
+    }),
+    "pt": frozenset({
+        "o", "a", "os", "as", "e", "de", "do", "da", "em", "para",
+        "com", "por", "no", "na", "uma", "um", "que", "é",
+    }),
+    "it": frozenset({
+        "il", "la", "i", "le", "e", "di", "in", "per", "con",
+        "da", "una", "un", "che", "è", "sono", "del", "della",
+    }),
+}
+
+
+def _detect_language(text: str) -> str:
+    """Return the most likely language of ``text``.
+
+    Counts the occurrence of each language's stopword set, returns the
+    winner.  Defaults to "en" when no language clears 3 matches —
+    English is what the default _RESUME_VOCAB_DENYLIST handles, so the
+    fallback is safe.
+    """
+    if not text:
+        return "en"
+    words = re.findall(r"[a-zàáâãäåçèéêëìíîïñòóôõöùúûüýÿ]+", text.lower())
+    if not words:
+        return "en"
+    counts: dict = {}
+    for lang, stops in _LANGUAGE_STOPWORDS.items():
+        counts[lang] = sum(1 for w in words if w in stops)
+    best_lang = max(counts, key=counts.get)
+    if counts[best_lang] < 3:
+        return "en"
+    return best_lang
+
+
+# Per-language resume vocab.  Each set is MERGED with the English base
+# at runtime so locale-specific tokens add to (not replace) the English
+# denylist, protecting the typical case where a multilingual resume
+# mixes English with another language.
+_RESUME_VOCAB_BY_LANG: dict = {
+    "es": frozenset({
+        "resumen", "currículum", "curriculum", "vitae", "perfil",
+        "objetivo", "experiencia", "educación", "formación",
+        "habilidades", "competencias", "idiomas", "proyectos",
+        "referencias", "contacto", "dirección", "teléfono",
+        "ingeniero", "ingeniera", "desarrollador", "desarrolladora",
+        "gerente", "director", "directora", "analista", "consultor",
+        "consultora", "diseñador", "diseñadora", "arquitecto",
+        "arquitecta", "investigador", "investigadora", "asesor",
+        "asesora", "jefe", "jefa", "líder", "señor", "señora",
+        "señorita",
+    }),
+    "fr": frozenset({
+        "résumé", "curriculum", "vitae", "profil", "objectif",
+        "expérience", "formation", "éducation", "compétences",
+        "langues", "projets", "références", "contact", "adresse",
+        "téléphone", "ingénieur", "ingénieure", "développeur",
+        "développeuse", "directeur", "directrice", "responsable",
+        "analyste", "consultant", "consultante", "architecte",
+        "chercheur", "chercheuse", "conseiller", "conseillère",
+        "chef", "monsieur", "madame", "mademoiselle",
+    }),
+    "de": frozenset({
+        "lebenslauf", "profil", "ziel", "berufserfahrung",
+        "ausbildung", "kenntnisse", "sprachen", "projekte",
+        "referenzen", "kontakt", "adresse", "telefon", "ingenieur",
+        "ingenieurin", "entwickler", "entwicklerin", "leiter",
+        "leiterin", "manager", "managerin", "berater", "beraterin",
+        "architekt", "architektin", "forscher", "forscherin",
+        "chef", "chefin", "herr", "frau",
+    }),
+    "pt": frozenset({
+        "currículo", "perfil", "objetivo", "experiência",
+        "formação", "educação", "habilidades", "competências",
+        "idiomas", "projetos", "referências", "contato",
+        "endereço", "telefone", "engenheiro", "engenheira",
+        "desenvolvedor", "desenvolvedora", "gerente", "diretor",
+        "diretora", "analista", "consultor", "consultora",
+        "arquiteto", "arquiteta", "pesquisador", "pesquisadora",
+        "chefe", "senhor", "senhora", "senhorita",
+    }),
+    "it": frozenset({
+        "curriculum", "vitae", "profilo", "obiettivo", "esperienza",
+        "formazione", "istruzione", "competenze", "lingue",
+        "progetti", "referenze", "contatto", "indirizzo",
+        "telefono", "ingegnere", "ingegnera", "sviluppatore",
+        "sviluppatrice", "direttore", "direttrice", "responsabile",
+        "analista", "consulente", "architetto", "ricercatore",
+        "ricercatrice", "capo", "signor", "signora", "signorina",
+    }),
+}
+
 # --- Calibration-drift gate thresholds -------------------------------------
 # The classifier's published overall ECE is 0.012 (well-calibrated by the
 # field-convention threshold of 0.05).  But per-culture ECE varies: Arab
@@ -539,6 +657,22 @@ class BiasDetector:
     # --- Gender Detection -------------------------------------------------
 
     @staticmethod
+    def _resolve_denylist_for_text(text: str) -> tuple:
+        """Return (detected_language, denylist) for the input.
+
+        Merges the English base _RESUME_VOCAB_DENYLIST with any
+        locale-specific vocab in _RESUME_VOCAB_BY_LANG so multilingual
+        resumes (English + Spanish / French / German / Portuguese /
+        Italian) get both sets of denylisted vocabulary.
+        """
+        lang = _detect_language(text)
+        if lang == "en":
+            return lang, _RESUME_VOCAB_DENYLIST
+        extra = _RESUME_VOCAB_BY_LANG.get(lang, frozenset())
+        merged = _RESUME_VOCAB_DENYLIST | extra
+        return lang, merged
+
+    @staticmethod
     def _extract_header_token_strategies(text: str) -> list:
         """Return one candidate-token list per cascade strategy, in
         priority order.  Pulled out of detect_gender_proxy_scored so
@@ -567,6 +701,10 @@ class BiasDetector:
         if len(header_lines) > 1:
             blocks.append(" ".join(header_lines))
 
+        # Locale-aware denylist: English base + detected-language
+        # additions.  See _resolve_denylist_for_text.
+        _lang, denylist = BiasDetector._resolve_denylist_for_text(text)
+
         strategy_lists: list = []
         for block in blocks:
             cands: list = []
@@ -577,14 +715,24 @@ class BiasDetector:
                 # other non-letter character.  Strip surrounding punct
                 # (commas / quotes from "Doe," / "'Mary'") to avoid
                 # spurious tokens.
-                cleaned = re.sub(r"[^A-Za-z'\-]", "", raw)
+                cleaned = re.sub(r"[^A-Za-zÀ-ÿ'\-]", "", raw)
                 cleaned = cleaned.strip("'-")
                 if len(cleaned) < 2 or not cleaned[0].isupper():
                     continue
-                # Denylist check ignores hyphens/apostrophes — "Mr-Smith"
-                # (typo) should still be honorific-checked against "mr".
-                stripped = re.sub(r"[^a-z]", "", cleaned.lower())
-                if stripped in _RESUME_VOCAB_DENYLIST:
+                # Denylist check uses the lowercased alpha-only form so
+                # localised tokens with diacritics ("Ingénieur" ->
+                # "ingenieur") are still caught by the locale denylist.
+                stripped = re.sub(r"[^a-zàáâãäåçèéêëìíîïñòóôõöùúûüýÿ]", "", cleaned.lower())
+                if stripped in denylist:
+                    continue
+                # Also try the stripped diacritics-removed form for
+                # cross-locale matching ("Ingénieur" -> "ingenieur"
+                # also caught by English "ingenieur" if added).
+                normalised = (
+                    unicodedata.normalize("NFKD", stripped)
+                    .encode("ascii", "ignore").decode("ascii")
+                )
+                if normalised in denylist:
                     continue
                 cands.append(cleaned)
             strategy_lists.append(cands)
@@ -706,6 +854,12 @@ class BiasDetector:
             # model results and empty / surname-only headers.  Audit
             # report uses this to surface per-culture composition.
             "name_culture": "unknown",
+            # ISO 639-1 code of the detected resume language (en, es,
+            # fr, de, pt, it).  Defaults to "en" when no language
+            # clears the stopword-frequency threshold.  Surfaced so
+            # downstream callers can branch on locale (and so audit
+            # reports can show the language mix).
+            "detected_language": _detect_language(text),
         }
 
         # 1. Pronoun scan (full text, lowercased)

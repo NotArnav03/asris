@@ -704,6 +704,47 @@ class TestBiasDetector:
         assert "name_p_female" in r["signals"]
 
 
+    # --- Language detection + localised denylist (Task #32) ------------
+
+    def test_spanish_resume_detected_and_localised_denylist_applied(self):
+        from fairness.bias_detector import BiasDetector
+        text = (
+            "Currículum\n"
+            "Ingeniero de Software\n"
+            "María García\n"
+            "5 años de experiencia en el desarrollo de aplicaciones\n"
+            "con Python y JavaScript para los clientes de la empresa.\n"
+        )
+        r = BiasDetector.detect_gender_proxy_scored(text)
+        assert r["signals"]["detected_language"] == "es"
+
+    def test_french_resume_detected(self):
+        from fairness.bias_detector import BiasDetector
+        text = (
+            "Résumé\n"
+            "Ingénieur logiciel avec une expérience de 5 ans dans le\n"
+            "développement d'applications pour les clients de la société.\n"
+        )
+        r = BiasDetector.detect_gender_proxy_scored(text)
+        assert r["signals"]["detected_language"] == "fr"
+
+    def test_german_resume_detected(self):
+        from fairness.bias_detector import BiasDetector
+        text = (
+            "Lebenslauf\n"
+            "Software Ingenieur mit 5 Jahren Erfahrung in der\n"
+            "Entwicklung von Anwendungen für die Kunden der Firma.\n"
+        )
+        r = BiasDetector.detect_gender_proxy_scored(text)
+        assert r["signals"]["detected_language"] == "de"
+
+    def test_english_default_when_no_language_clears_threshold(self):
+        from fairness.bias_detector import BiasDetector
+        text = "Just a name\nSoftware Engineer"
+        r = BiasDetector.detect_gender_proxy_scored(text)
+        assert r["signals"]["detected_language"] == "en"
+
+
     def test_plain_ascii_unaffected_by_sanitisation(self):
         # Regression: NFKC/zero-width strip is idempotent on ASCII.
         # If this fails the sanitisation has a bug that ALSO affects
