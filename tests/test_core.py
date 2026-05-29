@@ -1337,6 +1337,78 @@ class TestFairnessRanker:
 
 
 # ═══════════════════════════════════════════════════════════════
+# Surname Denylist Coverage (Task #24)
+# ═══════════════════════════════════════════════════════════════
+
+class TestSurnameCoverage:
+    """Regression guard for surname denylist coverage.
+
+    Coverage is measured against data/names/surname_holdout.csv, a
+    curated set of ~95 well-attested common surnames per culture
+    drawn from authoritative public lists (Wikipedia US/Asia,
+    PRC public-security, Korean SIS, Japanese tele-directories,
+    Forebears.io).  If a future denylist edit drops the per-culture
+    coverage below the floor, this test fires immediately so the
+    regression is caught before shipping.
+    """
+
+    _COVERAGE_FLOOR_PER_CULTURE = 0.85
+    _COVERAGE_FLOOR_OVERALL     = 0.95
+
+    def _measure(self):
+        from data.names.validate_surnames import (
+            load_denylist, load_holdout, measure_coverage,
+        )
+        return measure_coverage(load_denylist(), load_holdout())
+
+    def test_overall_coverage_above_floor(self):
+        cov = self._measure()
+        total_n = sum(s["n"] for s in cov.values())
+        total_hits = sum(s["hits"] for s in cov.values())
+        ratio = total_hits / total_n
+        assert ratio >= self._COVERAGE_FLOOR_OVERALL, (
+            f"Overall surname coverage {ratio:.1%} below floor "
+            f"{self._COVERAGE_FLOOR_OVERALL:.1%}.  Recent denylist "
+            f"edits may have removed common surnames."
+        )
+
+    def test_per_culture_coverage_above_floor(self):
+        cov = self._measure()
+        for culture, stats in cov.items():
+            assert stats["coverage"] >= self._COVERAGE_FLOOR_PER_CULTURE, (
+                f"Culture {culture!r} surname coverage "
+                f"{stats['coverage']:.1%} below floor "
+                f"{self._COVERAGE_FLOOR_PER_CULTURE:.1%}.  Misses: "
+                f"{stats['misses']!r}"
+            )
+
+    def test_holdout_is_non_empty_per_culture(self):
+        from data.names.validate_surnames import load_holdout
+        h = load_holdout()
+        assert h, "holdout CSV produced no entries"
+        for culture, surnames in h.items():
+            assert len(surnames) >= 15, (
+                f"Holdout for {culture!r} has only {len(surnames)} "
+                f"entries — too few to validate coverage meaningfully"
+            )
+
+    def test_model_card_records_coverage(self):
+        # The model card should expose the latest validator output so
+        # reviewers see coverage at a glance without re-running the script.
+        import json
+        from pathlib import Path
+        card_path = Path("fairness/names/model_card.json")
+        if not card_path.exists():
+            import pytest
+            pytest.skip("model_card.json not present")
+        card = json.loads(card_path.read_text(encoding="utf-8"))
+        assert "surname_coverage" in card
+        for culture, stats in card["surname_coverage"].items():
+            assert "coverage" in stats
+            assert 0.0 <= stats["coverage"] <= 1.0
+
+
+# ═══════════════════════════════════════════════════════════════
 # Counterfactual Name-Swap Robustness (Task #22)
 # ═══════════════════════════════════════════════════════════════
 

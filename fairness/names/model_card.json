@@ -123,5 +123,27 @@
     "Coverage is best for European, East Asian, and Arab names (see by_culture metrics).  South Asian and Western unisex names have smaller training sets — interpret probabilities near 0.5 conservatively.",
     "Gender is treated as binary because the upstream corpus uses binary labels.  This does not reflect the full spectrum of gender identity.",
     "Calibration is performed on the same data distribution as training; cross-distribution drift (e.g. a corpus of African names) will degrade calibration."
-  ]
+  ],
+  "surname_coverage": {
+    "western": {
+      "n": 25,
+      "hits": 25,
+      "coverage": 1.0
+    },
+    "south_asian": {
+      "n": 25,
+      "hits": 25,
+      "coverage": 1.0
+    },
+    "east_asian": {
+      "n": 25,
+      "hits": 25,
+      "coverage": 1.0
+    },
+    "arab": {
+      "n": 20,
+      "hits": 18,
+      "coverage": 0.9
+    }
+  }
 }
