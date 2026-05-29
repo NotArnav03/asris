@@ -69,7 +69,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     accuracy_score, brier_score_loss, roc_auc_score,
 )
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import GridSearchCV, train_test_split
 from sklearn.pipeline import Pipeline
 
 
@@ -152,8 +152,90 @@ def _per_culture_metrics(
     return out
 
 
-def build_pipeline() -> Pipeline:
+# --- Grid search ---------------------------------------------------------
+# Run with `python fairness/names/train_classifier.py --grid-search` to
+# search over the grid below.  The search is on the UNCALIBRATED LR (the
+# calibration step is applied AFTER model selection — standard practice
+# since calibration assumes a fixed scoring function).  Default mode
+# (no flag) trains the existing hand-picked hyperparameters directly,
+# which is what the repo's pinned model.pkl reflects.
+
+GRID_PARAMS: dict = {
+    "tfidf__ngram_range":   [(2, 4), (2, 5), (3, 5), (3, 6)],
+    "tfidf__min_df":        [2, 3, 5],
+    "clf__C":               [0.1, 0.3, 1.0, 3.0, 10.0],
+}
+
+# Floor that a grid-selected configuration must clear to be shipped.
+# If the best holdout ECE exceeds this we KEEP the current hand-picked
+# config — refusing to ship a regression even if the search "found" it.
+ECE_REGRESSION_CEILING: float = 0.012  # current model's overall ECE
+ACCURACY_REGRESSION_FLOOR: float = 0.85
+
+
+def _grid_search(
+    train_df: pd.DataFrame,
+) -> tuple[dict, dict]:
+    """Run GridSearchCV on the uncalibrated TF-IDF + LR pipeline.
+
+    Scoring is ROC-AUC (robust to mild class imbalance and rewards
+    well-ordered probabilities).  Returns (best_params, search_summary).
+    """
+    print(f"Grid search over {GRID_PARAMS} ...")
+    search_pipeline = Pipeline([
+        ("tfidf", TfidfVectorizer(
+            analyzer="char_wb",
+            sublinear_tf=True,
+            lowercase=True,
+            max_df=0.95,
+        )),
+        ("clf", LogisticRegression(
+            solver="liblinear",
+            max_iter=2000,
+            random_state=RANDOM_STATE,
+        )),
+    ])
+    search = GridSearchCV(
+        estimator=search_pipeline,
+        param_grid=GRID_PARAMS,
+        scoring="roc_auc",
+        cv=3,                  # 3-fold on training data; tractable
+        n_jobs=-1,
+        refit=False,           # we refit on the final calibrated pipeline
+        verbose=1,
+    )
+    t0 = time.time()
+    search.fit(
+        train_df["name"].tolist(),
+        train_df["y"].to_numpy(),
+        clf__sample_weight=train_df["weight"].to_numpy(),
+    )
+    seconds = time.time() - t0
+    print(f"  Grid search complete in {seconds:.1f}s.")
+    print(f"  Best ROC-AUC (cv mean): {search.best_score_:.4f}")
+    print(f"  Best params: {search.best_params_}")
+    summary = {
+        "grid":             GRID_PARAMS,
+        "cv_folds":         3,
+        "scoring":          "roc_auc",
+        "best_cv_score":    round(float(search.best_score_), 4),
+        "best_params":      search.best_params_,
+        "fit_seconds":      round(seconds, 1),
+        "configs_searched": len(search.cv_results_["params"]),
+    }
+    return search.best_params_, summary
+
+
+def build_pipeline(
+    ngram_range: tuple = (2, 5),
+    min_df: int = 2,
+    C: float = 1.0,
+) -> Pipeline:
     """Construct the TF-IDF + calibrated LR pipeline.
+
+    Default hyperparameters are the hand-picked values shipped in the
+    repo's pinned model.pkl.  Override them by passing kwargs (the
+    grid-search path does exactly this).
 
     We use TF-IDF rather than raw counts so that very common n-grams
     (e.g. "an") don't dominate the decision over rarer, more
@@ -163,15 +245,15 @@ def build_pipeline() -> Pipeline:
     """
     vectorizer = TfidfVectorizer(
         analyzer="char_wb",
-        ngram_range=(2, 5),
-        min_df=2,           # drop hapax n-grams (overfitting noise)
+        ngram_range=ngram_range,
+        min_df=min_df,      # drop hapax n-grams (overfitting noise)
         max_df=0.95,        # drop near-universal n-grams
         sublinear_tf=True,
         lowercase=True,
     )
     base = LogisticRegression(
         solver="liblinear",  # fast on sparse high-dim features
-        C=1.0,
+        C=C,
         max_iter=2000,
         random_state=RANDOM_STATE,
     )
@@ -187,6 +269,16 @@ def build_pipeline() -> Pipeline:
 
 
 def main() -> None:
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument(
+        "--grid-search", action="store_true",
+        help="Run GridSearchCV over GRID_PARAMS to select hyperparameters. "
+             "Default is to use the existing hand-picked configuration "
+             "that the repo's pinned model.pkl reflects.",
+    )
+    args = ap.parse_args()
+
     print(f"Loading corpus from {CORPUS.relative_to(ROOT)} ...")
     df = load_corpus()
     print(f"  {len(df)} rows; class balance p_female={(df['y'].mean()):.3f}")
@@ -199,7 +291,24 @@ def main() -> None:
     )
     print(f"  train={len(train_df)}  test={len(test_df)}")
 
-    pipeline = build_pipeline()
+    chosen_ngram = (2, 5)
+    chosen_min_df = 2
+    chosen_C = 1.0
+    grid_summary: dict = {}
+    if args.grid_search:
+        best, grid_summary = _grid_search(train_df)
+        chosen_ngram = best.get("tfidf__ngram_range", chosen_ngram)
+        chosen_min_df = best.get("tfidf__min_df", chosen_min_df)
+        chosen_C = best.get("clf__C", chosen_C)
+    else:
+        print("Skipping grid search (default hand-picked hyperparameters). "
+              "Pass --grid-search to enable.")
+
+    pipeline = build_pipeline(
+        ngram_range=chosen_ngram,
+        min_df=chosen_min_df,
+        C=chosen_C,
+    )
 
     print("Fitting pipeline (TF-IDF + isotonic-calibrated LR) ...")
     t0 = time.time()
@@ -237,6 +346,27 @@ def main() -> None:
                   f"ece={m['ece']:.3f}")
         else:
             print(f"  {culture:<16} n={m['n']:>5}  ({m['note']})")
+
+    # --- Regression refusal -----------------------------------------
+    # Even when grid search "finds" a config, refuse to ship if it
+    # underperforms our floors.  This protects against the case where
+    # the grid expansion happens to favour a config that overfits CV
+    # but loses on holdout, or against accidental data corruption.
+    if args.grid_search:
+        if overall["ece"] > ECE_REGRESSION_CEILING:
+            raise RuntimeError(
+                f"Grid-selected config has holdout ECE {overall['ece']:.4f} "
+                f"> ceiling {ECE_REGRESSION_CEILING:.4f}. "
+                f"Refusing to ship a calibration regression. "
+                f"Either widen the search grid or accept the existing model."
+            )
+        if overall["accuracy"] < ACCURACY_REGRESSION_FLOOR:
+            raise RuntimeError(
+                f"Grid-selected config has holdout accuracy "
+                f"{overall['accuracy']:.4f} < floor "
+                f"{ACCURACY_REGRESSION_FLOOR:.4f}. "
+                f"Refusing to ship an accuracy regression."
+            )
 
     MODEL_OUT.parent.mkdir(parents=True, exist_ok=True)
     with MODEL_OUT.open("wb") as fh:
@@ -283,15 +413,15 @@ def main() -> None:
             "vectorizer": {
                 "type":        "TfidfVectorizer",
                 "analyzer":    "char_wb",
-                "ngram_range": [2, 5],
-                "min_df":      2,
+                "ngram_range": list(chosen_ngram),
+                "min_df":      chosen_min_df,
                 "max_df":      0.95,
                 "sublinear_tf": True,
             },
             "base_classifier": {
                 "type":      "LogisticRegression",
                 "solver":    "liblinear",
-                "C":         1.0,
+                "C":         chosen_C,
                 "max_iter":  2000,
             },
             "calibration": {
@@ -300,6 +430,10 @@ def main() -> None:
                 "cv":     5,
             },
         },
+        # Empty {} when grid search was skipped; full result dict when
+        # --grid-search was used.  Lets reviewers see the search space
+        # and the chosen winner.
+        "hyperparameter_search": grid_summary,
         "training": {
             "n_train":         int(len(train_df)),
             "n_test":          int(len(test_df)),

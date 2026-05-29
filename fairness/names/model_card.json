@@ -1,11 +1,11 @@
 {
   "model": "name-gender-classifier",
   "version": "1.0.0",
-  "trained_at": "2026-05-29T09:31:44.794892+00:00",
+  "trained_at": "2026-05-29T10:15:34.100722+00:00",
   "random_state": 20251128,
   "integrity": {
-    "sha256": "23357d4f563bb9f9482bedc06dfa42c6ab18ff431824a44e6c3b34538bfa0804",
-    "size_bytes": 3303290,
+    "sha256": "9034d1d75a7da35606d7603717fa579f246f1bca7c39b6c7bbc1ccc3c1533d02",
+    "size_bytes": 3302058,
     "verification": "On classifier load, fairness/names/classifier.py recomputes this hash and compares.  A mismatch sets classifier.integrity_violated = True; audit_ranking_bias then prepends a [CRITICAL] recommendation and exposes an integrity block in the audit report."
   },
   "training_corpus": {
@@ -29,7 +29,7 @@
     "base_classifier": {
       "type": "LogisticRegression",
       "solver": "liblinear",
-      "C": 1.0,
+      "C": 10.0,
       "max_iter": 2000
     },
     "calibration": {
@@ -38,70 +38,117 @@
       "cv": 5
     }
   },
+  "hyperparameter_search": {
+    "grid": {
+      "tfidf__ngram_range": [
+        [
+          2,
+          4
+        ],
+        [
+          2,
+          5
+        ],
+        [
+          3,
+          5
+        ],
+        [
+          3,
+          6
+        ]
+      ],
+      "tfidf__min_df": [
+        2,
+        3,
+        5
+      ],
+      "clf__C": [
+        0.1,
+        0.3,
+        1.0,
+        3.0,
+        10.0
+      ]
+    },
+    "cv_folds": 3,
+    "scoring": "roc_auc",
+    "best_cv_score": 0.9432,
+    "best_params": {
+      "clf__C": 10.0,
+      "tfidf__min_df": 2,
+      "tfidf__ngram_range": [
+        2,
+        5
+      ]
+    },
+    "fit_seconds": 82.9,
+    "configs_searched": 60
+  },
   "training": {
     "n_train": 36184,
     "n_test": 9046,
     "split": "stratified by (culture, y) — see train_classifier.py",
     "sample_weighted": true,
-    "fit_seconds": 5.2
+    "fit_seconds": 6.1
   },
   "metrics": {
     "overall": {
       "n": 9046,
-      "accuracy": 0.8781,
-      "roc_auc": 0.9414,
-      "brier": 0.0907,
-      "ece": 0.0123
+      "accuracy": 0.8874,
+      "roc_auc": 0.9502,
+      "brier": 0.0833,
+      "ece": 0.0105
     },
     "by_culture": {
       "arab": {
         "n": 996,
-        "accuracy": 0.7641,
-        "brier": 0.1709,
-        "ece": 0.0902,
-        "roc_auc": 0.8254
+        "accuracy": 0.7761,
+        "brier": 0.1628,
+        "ece": 0.0889,
+        "roc_auc": 0.8414
       },
       "east_asian": {
         "n": 1974,
-        "accuracy": 0.9103,
-        "brier": 0.0679,
-        "ece": 0.0601,
-        "roc_auc": 0.9352
+        "accuracy": 0.9255,
+        "brier": 0.0572,
+        "ece": 0.0507,
+        "roc_auc": 0.9506
       },
       "european_other": {
         "n": 4150,
-        "accuracy": 0.9017,
-        "brier": 0.0743,
-        "ece": 0.0239,
-        "roc_auc": 0.9603
+        "accuracy": 0.9084,
+        "brier": 0.068,
+        "ece": 0.0214,
+        "roc_auc": 0.9661
       },
       "other": {
         "n": 36,
         "accuracy": 0.7778,
-        "brier": 0.1549,
-        "ece": 0.2032,
-        "roc_auc": 0.9016
+        "brier": 0.1606,
+        "ece": 0.1929,
+        "roc_auc": 0.8762
       },
       "slavic": {
         "n": 815,
-        "accuracy": 0.8982,
-        "brier": 0.079,
-        "ece": 0.0838,
-        "roc_auc": 0.9683
+        "accuracy": 0.9006,
+        "brier": 0.0774,
+        "ece": 0.0636,
+        "roc_auc": 0.9654
       },
       "south_asian": {
         "n": 256,
-        "accuracy": 0.8906,
-        "brier": 0.089,
-        "ece": 0.0801,
-        "roc_auc": 0.9503
+        "accuracy": 0.8828,
+        "brier": 0.0852,
+        "ece": 0.069,
+        "roc_auc": 0.9578
       },
       "western": {
         "n": 819,
-        "accuracy": 0.7998,
-        "brier": 0.1409,
-        "ece": 0.066,
-        "roc_auc": 0.8822
+        "accuracy": 0.8168,
+        "brier": 0.1297,
+        "ece": 0.0547,
+        "roc_auc": 0.899
       }
     }
   },
