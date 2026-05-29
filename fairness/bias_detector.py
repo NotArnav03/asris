@@ -1052,18 +1052,138 @@ class BiasDetector:
 
     @staticmethod
     def demographic_parity_distance(
-        group_selection_rates: dict[str, float],
+        group_selection_rates: dict,
+        group_sizes: Optional[dict] = None,
     ) -> float:
-        """
-        Demographic Parity Distance (DPD).
-        DPD = max|P(Y=1|G=g) - P(Y=1)| over all groups g.
+        """Demographic Parity Distance (DPD).
+
+        DPD = max |P(Y=1 | G=g) - P(Y=1)| over all groups g.
         Returns 0 when perfectly fair.
+
+        When ``group_sizes`` is provided, the overall rate P(Y=1) is
+        computed as the SIZE-WEIGHTED Σ_g (n_g/N) * rate_g — the
+        statistically correct population rate.  Without sizes, falls
+        back to the unweighted mean of rates (which over-weights small
+        groups and was the bug flagged in the security review).
+
+        For full statistical breakdown (chi-squared independence test,
+        Theil index, weighted overall rate), see
+        demographic_parity_full().
         """
         if not group_selection_rates:
             return 0.0
         rates = list(group_selection_rates.values())
-        overall_rate = float(np.mean(rates))
+        if group_sizes:
+            total_size = sum(group_sizes.get(g, 0) for g in group_selection_rates)
+            if total_size > 0:
+                overall_rate = sum(
+                    group_sizes.get(g, 0) * r
+                    for g, r in group_selection_rates.items()
+                ) / total_size
+            else:
+                overall_rate = float(np.mean(rates))
+        else:
+            overall_rate = float(np.mean(rates))
         return float(max(abs(r - overall_rate) for r in rates))
+
+    @staticmethod
+    def demographic_parity_full(
+        group_selected: dict,
+        group_total: dict,
+    ) -> dict:
+        """Comprehensive demographic-parity statistics.
+
+        Returns a dict with:
+
+          overall_selection_rate
+            Size-weighted Σ_g n_g r_g / N — the population's overall
+            selection rate.  THIS is the statistically correct P(Y=1)
+            value to compare per-group rates against.
+
+          group_rates
+            {group: r_g}, each in [0, 1].
+
+          dpd_weighted
+            max_g |r_g - overall_rate| using the weighted overall rate.
+
+          dpd_unweighted
+            Same metric using the unweighted mean of rates (the legacy
+            value).  Surfaced for backwards comparability.
+
+          chi_squared
+            {statistic, p_value, dof}
+            Chi-squared independence test on the 2 x G contingency
+            table (selected vs not, per group).  Low p_value (e.g.
+            < 0.05) means the rates differ more than chance would
+            explain.
+
+          theil_t
+            Theil's T inequality index of selection rates.  Sensitive
+            to deviations in the upper tail (high-selection groups).
+            0 means perfect equality; higher means more inequality.
+
+        All values rounded to 4 decimals.
+        """
+        groups = [g for g in group_total if group_total[g] > 0]
+        if not groups:
+            return {
+                "overall_selection_rate": 0.0,
+                "group_rates":            {},
+                "dpd_weighted":           0.0,
+                "dpd_unweighted":         0.0,
+                "chi_squared":            {"statistic": 0.0, "p_value": 1.0, "dof": 0},
+                "theil_t":                0.0,
+            }
+
+        rates = {g: group_selected[g] / group_total[g] for g in groups}
+        N = sum(group_total[g] for g in groups)
+        total_selected = sum(group_selected[g] for g in groups)
+        overall = total_selected / N if N > 0 else 0.0
+
+        dpd_weighted   = max(abs(r - overall) for r in rates.values())
+        dpd_unweighted = max(
+            abs(r - float(np.mean(list(rates.values()))))
+            for r in rates.values()
+        )
+
+        # Chi-squared on the 2 x G contingency table.
+        chi_block: dict = {"statistic": 0.0, "p_value": 1.0, "dof": 0}
+        try:
+            from scipy.stats import chi2_contingency
+            observed = np.array([
+                [group_selected[g] for g in groups],
+                [group_total[g] - group_selected[g] for g in groups],
+            ])
+            chi2, p, dof, _exp = chi2_contingency(observed)
+            chi_block = {
+                "statistic": round(float(chi2), 4),
+                "p_value":   round(float(p), 6),
+                "dof":       int(dof),
+            }
+        except Exception:
+            pass
+
+        # Theil's T (entropy-based inequality).  Defined as
+        # T = (1/G) Σ_g (r_g/mean) ln(r_g/mean).  Skip groups with
+        # zero rate (ln 0 undefined); they contribute 0 by convention.
+        theil_t = 0.0
+        mean_rate = float(np.mean(list(rates.values()))) if rates else 0.0
+        if mean_rate > 0:
+            terms = []
+            for r in rates.values():
+                if r > 0:
+                    terms.append((r / mean_rate) * float(np.log(r / mean_rate)))
+            if terms:
+                theil_t = float(np.mean(terms))
+
+        return {
+            "overall_selection_rate": round(overall, 4),
+            "group_rates":            {g: round(r, 4) for g, r in rates.items()},
+            "dpd_weighted":           round(dpd_weighted, 4),
+            "dpd_unweighted":         round(dpd_unweighted, 4),
+            "chi_squared":            chi_block,
+            "theil_t":                round(theil_t, 4),
+        }
 
     @staticmethod
     def equalized_odds(
@@ -1510,6 +1630,24 @@ class BiasDetector:
         # makes the system look fair.  See task #15 in the security review.
         male_data = gender_groups.get("male", [])
         female_data = gender_groups.get("female", [])
+
+        # --- Comprehensive parity statistics (Task #5) -----------------
+        # Adds size-weighted DPD, chi-squared independence test, and
+        # Theil-T inequality on the male × female × selected
+        # contingency table.  Surfaced regardless of whether the AIR
+        # block fires; small-sample audits still benefit from the
+        # descriptive view.
+        if male_data and female_data:
+            results["parity_statistics"] = self.demographic_parity_full(
+                group_selected={
+                    "male":   sum(1 for r in male_data if r["selected"]),
+                    "female": sum(1 for r in female_data if r["selected"]),
+                },
+                group_total={
+                    "male":   len(male_data),
+                    "female": len(female_data),
+                },
+            )
 
         if male_data and female_data:
             air_hard = self.adverse_impact_ratio(

@@ -1337,6 +1337,84 @@ class TestBiasDetector:
 
     # --- Detection coverage gate (Task #4 / #39) -----------------------
 
+    # --- DPD weighting + chi-squared + Theil (Task #5 / #40) ----------
+
+    def test_dpd_uses_size_weighted_overall_rate_when_sizes_given(self):
+        from fairness.bias_detector import BiasDetector
+        # Unequal group sizes: A has 90, B has 10.  Rates A=0.5, B=0.9.
+        # Unweighted mean = 0.7; weighted = (0.9*90 + 0.9*10)/100=... wait.
+        # weighted = (0.5 * 90 + 0.9 * 10) / 100 = 0.54
+        # |0.5 - 0.54| = 0.04, |0.9 - 0.54| = 0.36 -> DPD_w = 0.36
+        # unweighted overall = 0.7; |0.5-0.7|=0.2, |0.9-0.7|=0.2 -> DPD_u = 0.2
+        rates = {"A": 0.5, "B": 0.9}
+        sizes = {"A": 90, "B": 10}
+        weighted = BiasDetector.demographic_parity_distance(rates, sizes)
+        unweighted = BiasDetector.demographic_parity_distance(rates)
+        assert abs(weighted - 0.36) < 0.01
+        assert abs(unweighted - 0.2) < 0.01
+
+    def test_demographic_parity_full_returns_all_metrics(self):
+        from fairness.bias_detector import BiasDetector
+        result = BiasDetector.demographic_parity_full(
+            group_selected={"male": 40, "female": 20},
+            group_total={"male": 50, "female": 50},
+        )
+        for key in (
+            "overall_selection_rate", "group_rates", "dpd_weighted",
+            "dpd_unweighted", "chi_squared", "theil_t",
+        ):
+            assert key in result
+        # overall = (40+20)/(50+50) = 0.6
+        assert abs(result["overall_selection_rate"] - 0.6) < 1e-9
+        # |0.8 - 0.6| = 0.2, |0.4 - 0.6| = 0.2 -> DPD = 0.2
+        assert abs(result["dpd_weighted"] - 0.2) < 1e-9
+
+    def test_chi_squared_detects_significant_difference(self):
+        from fairness.bias_detector import BiasDetector
+        # 40/50 male selected, 5/50 female -> very disparate
+        result = BiasDetector.demographic_parity_full(
+            group_selected={"male": 40, "female": 5},
+            group_total={"male": 50, "female": 50},
+        )
+        assert result["chi_squared"]["p_value"] < 0.01
+
+    def test_chi_squared_does_not_flag_balanced_rates(self):
+        from fairness.bias_detector import BiasDetector
+        result = BiasDetector.demographic_parity_full(
+            group_selected={"male": 25, "female": 25},
+            group_total={"male": 50, "female": 50},
+        )
+        assert result["chi_squared"]["p_value"] > 0.05
+
+    def test_theil_t_zero_when_rates_are_equal(self):
+        from fairness.bias_detector import BiasDetector
+        result = BiasDetector.demographic_parity_full(
+            group_selected={"male": 25, "female": 25},
+            group_total={"male": 50, "female": 50},
+        )
+        assert result["theil_t"] == 0.0
+
+    def test_theil_t_positive_when_rates_diverge(self):
+        from fairness.bias_detector import BiasDetector
+        result = BiasDetector.demographic_parity_full(
+            group_selected={"male": 45, "female": 5},
+            group_total={"male": 50, "female": 50},
+        )
+        assert result["theil_t"] > 0.05
+
+    def test_audit_surfaces_parity_statistics(self):
+        from fairness.bias_detector import BiasDetector
+        audit = BiasDetector().audit_ranking_bias(
+            {"p.txt": "Priya Sharma\nEng", "j.txt": "John Smith\nEng"},
+            {"p.txt": 0.9, "j.txt": 0.8},
+        )
+        assert "parity_statistics" in audit
+        ps = audit["parity_statistics"]
+        for key in ("overall_selection_rate", "dpd_weighted",
+                    "chi_squared", "theil_t"):
+            assert key in ps
+
+
     def test_detection_coverage_floor_surfaced(self):
         from fairness.bias_detector import BiasDetector
         audit = BiasDetector().audit_ranking_bias(
