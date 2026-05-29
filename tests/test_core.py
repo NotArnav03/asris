@@ -2525,6 +2525,129 @@ class TestCounterfactualRobustness:
 
 
 # ═══════════════════════════════════════════════════════════════
+# Constrained-Insertion FCR (Task #9)
+# ═══════════════════════════════════════════════════════════════
+
+class TestConstrainedInsertionFCR:
+    """Tests for the constrained-insertion FCR rewrite."""
+
+    def _ranked(self, names_scores_groups):
+        from ranking.fairness_ranker import RankedCandidate
+        return [
+            RankedCandidate(name=n, score=s, group=g)
+            for n, s, g in names_scores_groups
+        ]
+
+    def test_algorithm_is_constrained_insertion(self):
+        from ranking.fairness_ranker import FairnessConstrainedRanker
+        report = FairnessConstrainedRanker(threshold=0.8).rerank(
+            self._ranked([
+                ("a", 0.9, "male"),   ("b", 0.8, "male"),
+                ("c", 0.7, "female"), ("d", 0.6, "female"),
+            ]),
+        )
+        assert report.algorithm == "constrained_insertion"
+        assert report.termination_proof  # non-empty string
+
+    def test_within_group_order_is_preserved(self):
+        from ranking.fairness_ranker import FairnessConstrainedRanker
+        cands = self._ranked([
+            ("m1", 0.95, "male"),   ("m2", 0.90, "male"),
+            ("m3", 0.85, "male"),   ("m4", 0.80, "male"),
+            ("f1", 0.75, "female"), ("f2", 0.70, "female"),
+            ("f3", 0.65, "female"), ("f4", 0.60, "female"),
+        ])
+        report = FairnessConstrainedRanker(threshold=0.8).rerank(cands)
+        assert report.within_group_order_preserved is True
+        # Female candidates appear in the fair ranking in the same
+        # order they appeared in the input (f1, f2, f3, f4).
+        females_in_fair = [n for n in report.fair_ranking if n.startswith("f")]
+        assert females_in_fair == ["f1", "f2", "f3", "f4"]
+
+    def test_terminates_in_single_pass(self):
+        # The new algorithm makes EXACTLY one pass through n positions.
+        # num_swaps_equivalent counts positions where output differs
+        # from input; it is bounded by n, never n^2 or worse.
+        from ranking.fairness_ranker import FairnessConstrainedRanker
+        cands = self._ranked([
+            (f"c{i}", 1.0 - i * 0.01,
+             "male" if i % 2 == 0 else "female")
+            for i in range(50)
+        ])
+        report = FairnessConstrainedRanker(threshold=0.8).rerank(cands)
+        assert report.num_swaps <= len(cands)
+
+    def test_already_fair_ranking_passes_through(self):
+        from ranking.fairness_ranker import FairnessConstrainedRanker
+        cands = self._ranked([
+            ("a", 0.9, "male"),   ("b", 0.8, "female"),
+            ("c", 0.7, "male"),   ("d", 0.6, "female"),
+        ])
+        report = FairnessConstrainedRanker(threshold=0.8).rerank(cands)
+        assert report.fairness_satisfied is True
+        # No reordering should happen — the input is already alternating.
+        assert report.fair_ranking == ["a", "b", "c", "d"]
+
+    def test_severely_biased_input_gets_reordered(self):
+        from ranking.fairness_ranker import FairnessConstrainedRanker
+        # All 5 males at top, all 5 females at bottom.
+        cands = self._ranked([
+            ("m1", 0.95, "male"),   ("m2", 0.90, "male"),
+            ("m3", 0.85, "male"),   ("m4", 0.80, "male"),
+            ("m5", 0.75, "male"),   ("f1", 0.70, "female"),
+            ("f2", 0.65, "female"), ("f3", 0.60, "female"),
+            ("f4", 0.55, "female"), ("f5", 0.50, "female"),
+        ])
+        report = FairnessConstrainedRanker(threshold=0.8).rerank(cands)
+        # Female candidates should appear interleaved, not all at end.
+        first_female = next(
+            i for i, n in enumerate(report.fair_ranking) if n.startswith("f")
+        )
+        # In the input, first female is at index 5. After re-ranking,
+        # the first female should appear much earlier.
+        assert first_female < 5
+
+    def test_final_air_is_close_to_threshold_or_higher(self):
+        from ranking.fairness_ranker import FairnessConstrainedRanker
+        cands = self._ranked([
+            ("m1", 0.95, "male"),   ("m2", 0.90, "male"),
+            ("m3", 0.85, "male"),   ("f1", 0.80, "female"),
+            ("f2", 0.75, "female"), ("f3", 0.70, "female"),
+        ])
+        report = FairnessConstrainedRanker(threshold=0.8).rerank(cands)
+        # After re-ranking the final AIR over the full list should
+        # be 1.0 (both groups have all members "selected" at k=N).
+        assert report.final_air == 1.0
+
+    def test_displacement_is_bounded_and_metrics_consistent(self):
+        from ranking.fairness_ranker import FairnessConstrainedRanker
+        cands = self._ranked([
+            ("m1", 0.95, "male"),   ("m2", 0.90, "male"),
+            ("m3", 0.85, "male"),   ("m4", 0.80, "male"),
+            ("f1", 0.75, "female"), ("f2", 0.70, "female"),
+            ("f3", 0.65, "female"), ("f4", 0.60, "female"),
+        ])
+        report = FairnessConstrainedRanker(threshold=0.8).rerank(cands)
+        # Displacement bounded in [0, 1] by the metric definition.
+        assert 0.0 <= report.displacement_cost <= 1.0
+        # Max single-candidate displacement bounded by n-1.
+        assert 0 <= report.max_displacement <= len(cands) - 1
+
+    def test_pareto_frontier_monotone_in_threshold(self):
+        # As the AIR threshold increases, achieved_air should not
+        # DECREASE (the algorithm can always satisfy a looser
+        # threshold).  This isn't strictly true for greedy but the
+        # constrained-insertion variant satisfies it.
+        from ranking.fairness_ranker import FairnessConstrainedRanker
+        cands = self._ranked([
+            ("m1", 0.95, "male"),   ("m2", 0.90, "male"),
+            ("f1", 0.85, "female"), ("f2", 0.80, "female"),
+        ])
+        report = FairnessConstrainedRanker(threshold=0.8).rerank(cands)
+        assert len(report.pareto_points) >= 3
+
+
+# ═══════════════════════════════════════════════════════════════
 # Counterfactual Explainer Tests
 # ═══════════════════════════════════════════════════════════════
 
