@@ -1754,6 +1754,26 @@ class TestNameClassifier:
 
     # --- Semver lineage (Task #35) -------------------------------------
 
+    # --- Cache reset hooks (Task #36) ----------------------------------
+
+    def test_reset_classifier_singleton_clears_lru(self):
+        from fairness.names.classifier import (
+            reset_classifier_singleton, predict_cached,
+        )
+        # Warm the cache
+        predict_cached("John")
+        assert predict_cached.cache_info().currsize > 0
+        reset_classifier_singleton()
+        assert predict_cached.cache_info().currsize == 0
+
+    def test_reset_model_card_ece_cache_drops_cached_dict(self):
+        import fairness.bias_detector as bd
+        # Force the cache to be populated
+        bd._MODEL_CARD_ECE_CACHE = {"test_culture": 0.123}
+        bd.reset_model_card_ece_cache()
+        assert bd._MODEL_CARD_ECE_CACHE is None
+
+
     def test_model_card_has_version_and_lineage(self):
         import json
         from pathlib import Path

@@ -611,6 +611,16 @@ _CALIBRATION_ECE_COVERAGE_FLOOR: float  = 0.50
 _MODEL_CARD_ECE_CACHE: dict = None  # type: ignore[assignment]
 
 
+def reset_model_card_ece_cache() -> None:
+    """Reset the in-memory cache of per-culture ECE values.  Exposed
+    for tests that monkey-patch _load_model_card_ece or rewrite the
+    model card on disk — without this they would silently see stale
+    cached values.
+    """
+    global _MODEL_CARD_ECE_CACHE
+    _MODEL_CARD_ECE_CACHE = None
+
+
 def _load_model_card_ece() -> dict:
     """Read per-culture ECE from fairness/names/model_card.json once."""
     global _MODEL_CARD_ECE_CACHE

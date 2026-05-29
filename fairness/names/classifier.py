@@ -538,6 +538,18 @@ def get_classifier() -> NameGenderClassifier:
     return _singleton
 
 
+def reset_classifier_singleton() -> None:
+    """Test hook — drop the process-wide classifier instance and the
+    predict_cached LRU.  Use between tests that load mocked models
+    or stress-test the load path so each test starts from a clean
+    state instead of inheriting the previous test's cached singleton.
+    """
+    global _singleton
+    with _singleton_lock:
+        _singleton = None
+    predict_cached.cache_clear()
+
+
 @lru_cache(maxsize=4096)
 def predict_cached(name: str) -> NameGenderResult:
     """Cached single-name predictor.
