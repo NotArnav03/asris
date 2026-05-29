@@ -1,11 +1,11 @@
 {
   "model": "name-gender-classifier",
   "version": "1.0.0",
-  "trained_at": "2026-05-29T10:15:34.100722+00:00",
+  "trained_at": "2026-05-29T10:59:05.530677+00:00",
   "random_state": 20251128,
   "integrity": {
-    "sha256": "9034d1d75a7da35606d7603717fa579f246f1bca7c39b6c7bbc1ccc3c1533d02",
-    "size_bytes": 3302058,
+    "sha256": "0331ebc090f9c9effe033b9d8cd875d42ab00104ea259d5d85519175e9abafcb",
+    "size_bytes": 4653506,
     "verification": "On classifier load, fairness/names/classifier.py recomputes this hash and compares.  A mismatch sets classifier.integrity_violated = True; audit_ranking_bias then prepends a [CRITICAL] recommendation and exposes an integrity block in the audit report."
   },
   "training_corpus": {
@@ -15,6 +15,8 @@
     "attribution": "data/names/ATTRIBUTION.md"
   },
   "pipeline": {
+    "type": "CulturalCalibratedClassifier",
+    "design": "per-culture isotonic calibration over shared TF-IDF features",
     "vectorizer": {
       "type": "TfidfVectorizer",
       "analyzer": "char_wb",
@@ -26,129 +28,108 @@
       "max_df": 0.95,
       "sublinear_tf": true
     },
-    "base_classifier": {
+    "gender_classifier": {
       "type": "LogisticRegression",
       "solver": "liblinear",
-      "C": 10.0,
+      "C": 1.0,
+      "max_iter": 2000
+    },
+    "culture_classifier": {
+      "type": "LogisticRegression (multiclass)",
+      "solver": "liblinear",
+      "C": 1.0,
       "max_iter": 2000
     },
     "calibration": {
-      "type": "CalibratedClassifierCV",
-      "method": "isotonic",
-      "cv": 5
+      "type": "IsotonicRegression",
+      "scope": "per-culture cluster + global fallback",
+      "min_cluster_size": 30,
+      "out_of_bounds": "clip",
+      "per_culture_clusters_calibrated": [
+        "arab",
+        "east_asian",
+        "european_other",
+        "other",
+        "slavic",
+        "south_asian",
+        "western"
+      ],
+      "ece_per_culture_global_only_baseline": {
+        "arab": 0.0789,
+        "east_asian": 0.0556,
+        "european_other": 0.0229,
+        "other": 0.1552,
+        "slavic": 0.0856,
+        "south_asian": 0.0848,
+        "western": 0.0599
+      }
     }
   },
-  "hyperparameter_search": {
-    "grid": {
-      "tfidf__ngram_range": [
-        [
-          2,
-          4
-        ],
-        [
-          2,
-          5
-        ],
-        [
-          3,
-          5
-        ],
-        [
-          3,
-          6
-        ]
-      ],
-      "tfidf__min_df": [
-        2,
-        3,
-        5
-      ],
-      "clf__C": [
-        0.1,
-        0.3,
-        1.0,
-        3.0,
-        10.0
-      ]
-    },
-    "cv_folds": 3,
-    "scoring": "roc_auc",
-    "best_cv_score": 0.9432,
-    "best_params": {
-      "clf__C": 10.0,
-      "tfidf__min_df": 2,
-      "tfidf__ngram_range": [
-        2,
-        5
-      ]
-    },
-    "fit_seconds": 82.9,
-    "configs_searched": 60
-  },
+  "hyperparameter_search": {},
   "training": {
     "n_train": 36184,
     "n_test": 9046,
     "split": "stratified by (culture, y) — see train_classifier.py",
     "sample_weighted": true,
-    "fit_seconds": 6.1
+    "fit_seconds": 0.0
   },
   "metrics": {
     "overall": {
       "n": 9046,
-      "accuracy": 0.8874,
-      "roc_auc": 0.9502,
-      "brier": 0.0833,
-      "ece": 0.0105
+      "accuracy": 0.8841,
+      "roc_auc": 0.9472,
+      "brier": 0.0874,
+      "ece": 0.0157
     },
     "by_culture": {
       "arab": {
         "n": 996,
-        "accuracy": 0.7761,
-        "brier": 0.1628,
-        "ece": 0.0889,
-        "roc_auc": 0.8414
+        "accuracy": 0.7671,
+        "brier": 0.1674,
+        "ece": 0.0466,
+        "roc_auc": 0.8187
       },
       "east_asian": {
         "n": 1974,
-        "accuracy": 0.9255,
-        "brier": 0.0572,
-        "ece": 0.0507,
-        "roc_auc": 0.9506
+        "accuracy": 0.9225,
+        "brier": 0.0613,
+        "ece": 0.0227,
+        "roc_auc": 0.9438
       },
       "european_other": {
         "n": 4150,
-        "accuracy": 0.9084,
-        "brier": 0.068,
-        "ece": 0.0214,
-        "roc_auc": 0.9661
+        "accuracy": 0.9053,
+        "brier": 0.0714,
+        "ece": 0.0056,
+        "roc_auc": 0.9623
       },
       "other": {
         "n": 36,
-        "accuracy": 0.7778,
-        "brier": 0.1606,
-        "ece": 0.1929,
-        "roc_auc": 0.8762
+        "accuracy": 0.8056,
+        "brier": 0.1518,
+        "ece": 0.1841,
+        "roc_auc": 0.8571
       },
       "slavic": {
         "n": 815,
-        "accuracy": 0.9006,
-        "brier": 0.0774,
-        "ece": 0.0636,
-        "roc_auc": 0.9654
+        "accuracy": 0.8982,
+        "brier": 0.0793,
+        "ece": 0.0569,
+        "roc_auc": 0.9611
       },
       "south_asian": {
         "n": 256,
-        "accuracy": 0.8828,
-        "brier": 0.0852,
-        "ece": 0.069,
-        "roc_auc": 0.9578
+        "accuracy": 0.9023,
+        "brier": 0.0859,
+        "ece": 0.0667,
+        "roc_auc": 0.9472
       },
       "western": {
         "n": 819,
-        "accuracy": 0.8168,
-        "brier": 0.1297,
-        "ece": 0.0547,
-        "roc_auc": 0.899
+        "accuracy": 0.8107,
+        "brier": 0.1398,
+        "ece": 0.0636,
+        "roc_auc": 0.8797
       }
     }
   },

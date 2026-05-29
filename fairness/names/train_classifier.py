@@ -65,12 +65,22 @@ import numpy as np
 import pandas as pd
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     accuracy_score, brier_score_loss, roc_auc_score,
 )
 from sklearn.model_selection import GridSearchCV, train_test_split
 from sklearn.pipeline import Pipeline
+
+
+# Import the pipeline class from its dedicated module so the runtime
+# unpickle path doesn't need to import this training script.  See
+# fairness/names/cultural_classifier.py for the class implementation.
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent.parent.parent))
+from fairness.names.cultural_classifier import CulturalCalibratedClassifier  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -304,26 +314,111 @@ def main() -> None:
         print("Skipping grid search (default hand-picked hyperparameters). "
               "Pass --grid-search to enable.")
 
-    pipeline = build_pipeline(
+    # --- Stage 1: shared TF-IDF vectoriser ---------------------------
+    vectorizer = TfidfVectorizer(
+        analyzer="char_wb",
         ngram_range=chosen_ngram,
         min_df=chosen_min_df,
-        C=chosen_C,
+        max_df=0.95,
+        sublinear_tf=True,
+        lowercase=True,
     )
-
-    print("Fitting pipeline (TF-IDF + isotonic-calibrated LR) ...")
+    print("Fitting shared TF-IDF vectoriser ...")
     t0 = time.time()
-    pipeline.fit(
-        train_df["name"],
-        train_df["y"],
-        clf__sample_weight=train_df["weight"].to_numpy(),
-    )
-    fit_seconds = time.time() - t0
-    print(f"  fit in {fit_seconds:.1f}s")
+    X_train = vectorizer.fit_transform(train_df["name"])
+    X_test  = vectorizer.transform(test_df["name"])
+    print(f"  vocab size = {len(vectorizer.vocabulary_)} "
+          f"(in {time.time() - t0:.1f}s)")
 
+    # --- Stage 2: base gender LR (UNCALIBRATED) ----------------------
+    print("Fitting gender LR ...")
+    t0 = time.time()
+    gender_lr = LogisticRegression(
+        solver="liblinear",
+        C=chosen_C,
+        max_iter=2000,
+        random_state=RANDOM_STATE,
+    )
+    gender_lr.fit(
+        X_train, train_df["y"],
+        sample_weight=train_df["weight"].to_numpy(),
+    )
+    print(f"  done in {time.time() - t0:.1f}s")
+
+    # --- Stage 3: multi-class culture classifier ---------------------
+    # Trained on the same TF-IDF features so character n-gram patterns
+    # discriminative for given-name origin become per-culture features.
+    # Predicted culture is used to pick the right isotonic calibrator
+    # on every OOV inference call.
+    print("Fitting culture classifier ...")
+    t0 = time.time()
+    # Multinomial LR via lbfgs — liblinear only does one-vs-rest binary.
+    # For our 7 culture classes lbfgs is fast (sparse char-ngram features,
+    # few hundred iterations) and gives a true multinomial probability
+    # distribution.
+    culture_lr = LogisticRegression(
+        solver="lbfgs",
+        C=chosen_C,
+        max_iter=2000,
+        random_state=RANDOM_STATE,
+        n_jobs=-1,
+    )
+    culture_lr.fit(
+        X_train, train_df["culture"],
+        sample_weight=train_df["weight"].to_numpy(),
+    )
+    print(f"  culture classifier accuracy on holdout: "
+          f"{culture_lr.score(X_test, test_df['culture']):.3f} "
+          f"(in {time.time() - t0:.1f}s)")
+
+    # --- Stage 4: per-culture + global isotonic calibrators ----------
+    # Raw gender probabilities on the holdout, then fit one isotonic
+    # per cluster with enough samples (>= 30) plus a global fallback.
+    print("Fitting isotonic calibrators ...")
+    t0 = time.time()
+    raw_test_probs = gender_lr.predict_proba(X_test)[:, 1]
+    test_y = test_df["y"].to_numpy()
+    test_cultures = test_df["culture"].to_numpy()
+
+    global_calibrator = IsotonicRegression(out_of_bounds="clip")
+    global_calibrator.fit(raw_test_probs, test_y)
+
+    per_culture_calibrators: dict = {}
+    for culture in sorted(set(test_cultures)):
+        mask = test_cultures == culture
+        n_cluster = int(mask.sum())
+        if n_cluster < 30:
+            continue
+        cal = IsotonicRegression(out_of_bounds="clip")
+        cal.fit(raw_test_probs[mask], test_y[mask])
+        per_culture_calibrators[culture] = cal
+    print(f"  fitted {len(per_culture_calibrators)} per-culture "
+          f"calibrators + global (in {time.time() - t0:.1f}s)")
+
+    pipeline = CulturalCalibratedClassifier(
+        vectorizer=vectorizer,
+        gender_lr=gender_lr,
+        culture_lr=culture_lr,
+        global_calibrator=global_calibrator,
+        per_culture_calibrators=per_culture_calibrators,
+    )
+    fit_seconds = time.time() - t0  # last fit timing only — kept for card schema
+
+    # --- Stage 5: evaluate -------------------------------------------
     print("Evaluating on holdout ...")
     test_prob = pipeline.predict_proba(test_df["name"])[:, 1]
     test_pred = (test_prob >= 0.5).astype(int)
-    test_y = test_df["y"].to_numpy()
+    # Also compute the BASELINE (global-only) calibration so the card
+    # can quantify the per-culture improvement.
+    baseline_prob = global_calibrator.predict(raw_test_probs)
+    baseline_by_culture: dict = {}
+    for culture in sorted(set(test_cultures)):
+        mask = test_cultures == culture
+        if mask.sum() < 10:
+            continue
+        baseline_by_culture[culture] = round(
+            _expected_calibration_error(test_y[mask], baseline_prob[mask]), 4
+        )
 
     overall = {
         "n":        int(len(test_df)),
@@ -410,6 +505,9 @@ def main() -> None:
             "attribution": "data/names/ATTRIBUTION.md",
         },
         "pipeline": {
+            "type":         "CulturalCalibratedClassifier",
+            "design":       "per-culture isotonic calibration over shared "
+                            "TF-IDF features",
             "vectorizer": {
                 "type":        "TfidfVectorizer",
                 "analyzer":    "char_wb",
@@ -418,16 +516,27 @@ def main() -> None:
                 "max_df":      0.95,
                 "sublinear_tf": True,
             },
-            "base_classifier": {
+            "gender_classifier": {
                 "type":      "LogisticRegression",
                 "solver":    "liblinear",
                 "C":         chosen_C,
                 "max_iter":  2000,
             },
+            "culture_classifier": {
+                "type":      "LogisticRegression (multiclass)",
+                "solver":    "liblinear",
+                "C":         chosen_C,
+                "max_iter":  2000,
+            },
             "calibration": {
-                "type":   "CalibratedClassifierCV",
-                "method": "isotonic",
-                "cv":     5,
+                "type":            "IsotonicRegression",
+                "scope":           "per-culture cluster + global fallback",
+                "min_cluster_size": 30,
+                "out_of_bounds":   "clip",
+                "per_culture_clusters_calibrated": sorted(
+                    per_culture_calibrators.keys()
+                ),
+                "ece_per_culture_global_only_baseline": baseline_by_culture,
             },
         },
         # Empty {} when grid search was skipped; full result dict when

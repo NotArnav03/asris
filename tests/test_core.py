@@ -1562,6 +1562,46 @@ class TestNameClassifier:
             )
 
 
+    # --- Per-culture calibration (Task #31) ----------------------------
+
+    def test_per_culture_calibration_improved_over_global_baseline(self):
+        # The model card records ece_per_culture_global_only_baseline
+        # alongside the post-per-culture metrics in metrics.by_culture.
+        # Per-culture calibration must improve ECE (vs baseline) on the
+        # MAJORITY of clusters or this whole task was a regression.
+        import json
+        from pathlib import Path
+        card = json.loads(
+            Path("fairness/names/model_card.json").read_text(encoding="utf-8")
+        )
+        cal = card["pipeline"]["calibration"]
+        assert cal["type"] == "IsotonicRegression"
+        assert "per_culture_clusters_calibrated" in cal
+        assert len(cal["per_culture_clusters_calibrated"]) >= 4
+
+        baseline = cal["ece_per_culture_global_only_baseline"]
+        final = card["metrics"]["by_culture"]
+        improvements = []
+        for culture, baseline_ece in baseline.items():
+            if culture not in final or "ece" not in final[culture]:
+                continue
+            improvements.append(final[culture]["ece"] <= baseline_ece + 0.005)
+        assert sum(improvements) >= len(improvements) // 2, (
+            "Per-culture calibration must improve ECE on the majority "
+            "of clusters compared to the global-only baseline"
+        )
+
+    def test_model_pipeline_is_cultural_calibrated_classifier(self):
+        # Type guard so the runtime always loads the new design.
+        from fairness.names.classifier import get_classifier
+        from fairness.names.cultural_classifier import (
+            CulturalCalibratedClassifier,
+        )
+        clf = get_classifier()
+        clf._ensure_loaded()
+        assert isinstance(clf._model, CulturalCalibratedClassifier)
+
+
     def test_overall_calibration_target_met(self):
         # The model_card declares calibration_target.overall_meets_target.
         # If this regresses (e.g. someone re-trains with worse data),
