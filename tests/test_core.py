@@ -2846,6 +2846,50 @@ class TestCounterfactual:
         assert "machine learning" in skills
         assert "nlp" in skills
 
+    # --- Skill extraction false-positive fixes (Task #48) -------------
+
+    def test_java_does_not_match_inside_javascript(self):
+        # Regression: prior substring-match code put "java" in the
+        # found set whenever "javascript" appeared in the resume.
+        from explainability.counterfactual import CounterfactualExplainer
+        exp = CounterfactualExplainer()
+        skills = exp._extract_skills(
+            "Senior JavaScript engineer with TypeScript and React"
+        )
+        assert "javascript" in skills
+        assert "java" not in skills
+
+    def test_go_does_not_match_inside_google(self):
+        from explainability.counterfactual import CounterfactualExplainer
+        exp = CounterfactualExplainer()
+        skills = exp._extract_skills(
+            "Worked at Google on Android applications"
+        )
+        # "go" must NOT be falsely extracted from "Google"
+        assert "go" not in skills
+
+    def test_cpp_matches_correctly_despite_trailing_plus(self):
+        # \b boundary fails before/after `+` characters; the prior code
+        # never matched "c++" because of this.  Look-around fixes it.
+        from explainability.counterfactual import CounterfactualExplainer
+        exp = CounterfactualExplainer()
+        skills = exp._extract_skills(
+            "Systems engineer with extensive C++ experience"
+        )
+        assert "c++" in skills
+
+    def test_explainer_skill_extraction_matches_corrected(self):
+        # The MatchExplainer uses the same fix.  Spot-check it.
+        from explainability.explainer import MatchExplainer
+        e = MatchExplainer()
+        e._load_skills()
+        skills = e._extract_skills_from_text(
+            "JavaScript and Go developer; C++ background"
+        )
+        assert "javascript" in skills
+        assert "java" not in skills
+        assert "c++" in skills
+
     def test_counterfactual_report_structure(self):
         from explainability.counterfactual import CounterfactualExplainer
         exp = CounterfactualExplainer()

@@ -112,18 +112,31 @@ class MatchExplainer:
 
         self._skills_loaded = True
 
+    # Compiled pattern cache, shared with counterfactual.py's approach:
+    # look-around-anchored boundaries handle trailing non-word chars
+    # ("c++", "c#") that vanilla \b can't match, and also fix the
+    # substring false positive of the prior implementation
+    # ("Java" inside "JavaScript", "Go" inside "Google", etc.).
+    _SKILL_PATTERN_CACHE: dict = {}
+
+    @classmethod
+    def _skill_pattern(cls, skill: str):
+        if skill not in cls._SKILL_PATTERN_CACHE:
+            cls._SKILL_PATTERN_CACHE[skill] = re.compile(
+                rf"(?<!\w){re.escape(skill)}(?!\w)"
+            )
+        return cls._SKILL_PATTERN_CACHE[skill]
+
     def _extract_skills_from_text(self, text: str) -> set:
-        """Extract skills mentioned in a text using the full vocabulary."""
+        """Extract skills mentioned in a text using look-around-anchored
+        matching.  Handles edge tokens like "c++" and "c#" that the
+        prior substring-based code missed, and avoids the
+        "java in javascript" false positive."""
         text_lower = text.lower()
         found = set()
         for skill in self._all_skill_names:
-            # Use word boundary matching for short skills to avoid false positives
-            if len(skill) <= 3:
-                if re.search(r'\b' + re.escape(skill) + r'\b', text_lower):
-                    found.add(skill)
-            else:
-                if skill in text_lower:
-                    found.add(skill)
+            if self._skill_pattern(skill).search(text_lower):
+                found.add(skill)
         return found
 
     def explain_match(

@@ -207,17 +207,42 @@ class CounterfactualExplainer:
 
     # ─── Skill Extraction ────────────────────────────────────────
 
-    def _extract_skills(self, text: str) -> set[str]:
-        """Extract skills from text using vocabulary matching."""
+    # Cached compiled patterns — one per skill, built lazily.  Patterns
+    # use look-around-based word boundaries (?<!\w) / (?!\w) instead of
+    # \b because:
+    #   - \b is the transition between word-char and non-word-char,
+    #     which fails on tokens that END in a non-word char like "c++"
+    #     and "c#" — the trailing `\b` requires a word char to follow,
+    #     so "c++ programmer" never matches.
+    #   - (?<!\w) and (?!\w) are simple "no word char on either side"
+    #     assertions and work uniformly for all skills.
+    # The pure substring matching the prior code used for skills > 3
+    # chars produced false positives — "Java" matched inside
+    # "JavaScript", "Go" matched inside "Google", etc.
+    _SKILL_PATTERN_CACHE: dict = {}
+
+    @classmethod
+    def _skill_pattern(cls, skill: str):
+        if skill not in cls._SKILL_PATTERN_CACHE:
+            cls._SKILL_PATTERN_CACHE[skill] = re.compile(
+                rf"(?<!\w){re.escape(skill)}(?!\w)"
+            )
+        return cls._SKILL_PATTERN_CACHE[skill]
+
+    def _extract_skills(self, text: str) -> set:
+        """Extract skills from text using look-around-anchored matching.
+
+        Closes the false-positive bugs in the prior substring-based
+        implementation: "Java" no longer falsely matches inside
+        "JavaScript", "Go" no longer matches inside "Google", and
+        "C++" / "C#" now match correctly despite their trailing
+        non-word characters.
+        """
         text_lower = text.lower()
         found = set()
         for skill in self.SKILL_TERMS:
-            if len(skill) <= 3:
-                if re.search(r'\b' + re.escape(skill) + r'\b', text_lower):
-                    found.add(skill)
-            else:
-                if skill in text_lower:
-                    found.add(skill)
+            if self._skill_pattern(skill).search(text_lower):
+                found.add(skill)
         return found
 
     # ─── Score Simulation ────────────────────────────────────────
