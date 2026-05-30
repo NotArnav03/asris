@@ -118,6 +118,39 @@ jobs:
           path: pytest.log
           if-no-files-found: warn
 
+      - name: Render failing-test summary on workflow page (always)
+        # GITHUB_STEP_SUMMARY is rendered as markdown on the public
+        # workflow run page — anyone with the repo URL can read it
+        # without needing to download the artefact (which requires
+        # authentication).  We surface the test session line, the
+        # first failure block, and the short test summary so the
+        # actual failure mode is visible in one click.
+        if: always()
+        shell: bash
+        run: |
+          if [ ! -f pytest.log ]; then
+            echo "## pytest.log missing" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "## pytest summary (Python ${{ matrix.python-version }})" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          # Header (platform / python / plugins)
+          sed -n '1,8p' pytest.log >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### FAILURES" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          # Everything between "FAILURES" and "short test summary"
+          awk '/===.* FAILURES .*===/{flag=1} /short test summary info/{flag=0} flag' pytest.log \
+            | head -200 >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Short test summary" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          awk '/short test summary info/{flag=1} flag' pytest.log \
+            | head -80 >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload coverage XML (3.12 only)
         if: matrix.python-version == '3.12'
         uses: actions/upload-artifact@v4
