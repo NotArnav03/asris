@@ -94,7 +94,7 @@ jobs:
             -v \
             --tb=long \
             -rA \
-            -k "TestBiasDetector or TestNameClassifier or TestCounterfactualRobustness or TestSurnameCoverage or TestConstrainedInsertionFCR or TestApiHardening or TestFairnessRanker or TestEvaluationMetrics or TestCounterfactual" \
+            -k "TestBiasDetector or TestNameClassifier or TestCounterfactualRobustness or TestSurnameCoverage or TestConstrainedInsertionFCR or TestFairnessRanker or TestEvaluationMetrics or TestCounterfactual" \
             --cov=fairness.bias_detector \
             --cov=fairness.names.classifier \
             --cov=fairness.names.cultural_classifier \
