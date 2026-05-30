@@ -83,14 +83,17 @@ jobs:
           "
 
       - name: Run fairness + classifier + ranker test suite
-        # --cov scoped to the modules with actual test coverage today.
-        # Coverage gate lowered to 60% pending #50-#52 (ranker
-        # secondaries, embeddings, preprocessing) which will lift the
-        # gate back to 70% as their tests land.
+        # Captures stdout AND stderr to pytest.log so the actual
+        # failure surfaces in the artifact even when the step exits
+        # non-zero.  pipefail propagates pytest's exit code through
+        # the tee.
+        shell: bash
         run: |
+          set -o pipefail
           pytest tests/test_core.py \
             -v \
             --tb=long \
+            -rA \
             -k "TestBiasDetector or TestNameClassifier or TestCounterfactualRobustness or TestSurnameCoverage or TestConstrainedInsertionFCR or TestApiHardening or TestFairnessRanker or TestEvaluationMetrics or TestCounterfactual" \
             --cov=fairness.bias_detector \
             --cov=fairness.names.classifier \
@@ -104,7 +107,16 @@ jobs:
             --cov=api.server \
             --cov-report=xml \
             --cov-report=term-missing \
-            --cov-fail-under=60
+            --cov-fail-under=60 \
+            2>&1 | tee pytest.log
+
+      - name: Upload pytest log (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-log-py${{ matrix.python-version }}
+          path: pytest.log
+          if-no-files-found: warn
 
       - name: Upload coverage XML (3.12 only)
         if: matrix.python-version == '3.12'
