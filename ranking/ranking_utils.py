@@ -4,6 +4,7 @@ Shared base utilities for all ranking evaluators to eliminate code duplication.
 """
 
 import os
+import re
 import pandas as pd
 from pathlib import Path
 from typing import Optional
@@ -18,6 +19,39 @@ from embeddings.embedding_manager import EmbeddingManager
 from evaluation.metrics import RankingEvaluator, quick_evaluate
 
 logger = get_logger("ranking.utils")
+
+
+# --- Shared skill-extraction primitives ----------------------------------
+# The same look-around-anchored matcher used in
+# explainability/counterfactual.py and explainability/explainer.py.
+# Plain `skill in text_lower` substring matching produced two false
+# positives that this fixes:
+#   - "java" matched inside "javascript"
+#   - "c++" never matched because \b can't anchor against `+`
+# The fix is structurally identical across modules; centralise it
+# here so future skill extractors get it for free.
+_SKILL_PATTERN_CACHE: dict = {}
+
+
+def _skill_pattern(skill: str) -> "re.Pattern":
+    """Look-around-anchored matcher for a single skill token."""
+    if skill not in _SKILL_PATTERN_CACHE:
+        _SKILL_PATTERN_CACHE[skill] = re.compile(
+            rf"(?<!\w){re.escape(skill)}(?!\w)"
+        )
+    return _SKILL_PATTERN_CACHE[skill]
+
+
+def extract_skills_in_text(skills: list, text: str) -> set:
+    """Return the subset of ``skills`` that appear in ``text``.
+
+    Skills are matched with look-around-anchored boundaries so
+    "java" inside "javascript" does NOT match, and tokens with
+    trailing non-word characters ("c++", "c#") do match correctly.
+    Cache-keyed by skill string so each token compiles once.
+    """
+    text_lower = text.lower()
+    return {s for s in skills if _skill_pattern(s).search(text_lower)}
 
 
 class RankingPipeline:
@@ -82,12 +116,14 @@ class RankingPipeline:
                     skill_dict[skill_abr].lower()
                 )
 
-        # Resume → skills
+        # Resume -> skills.  Uses the look-around-anchored matcher so
+        # "java" inside "javascript" does NOT match (this was a real
+        # false-positive bug in the prior substring-based code).
         self._all_skill_names = [s.lower() for s in skills_map["skill_name"].tolist()]
         for filename, text in self.resume_texts.items():
-            text_lower = text.lower()
-            matched = {s for s in self._all_skill_names if s in text_lower}
-            self._resume_skill_map[filename] = matched
+            self._resume_skill_map[filename] = extract_skills_in_text(
+                self._all_skill_names, text,
+            )
 
         self._skills_loaded = True
         logger.info(f"[{self.name}] Loaded skills for {len(self._jd_skill_map)} JDs, "
@@ -143,9 +179,12 @@ class RankingPipeline:
         # Flat metrics
         flat_results = quick_evaluate(labels, scores)
 
-        # Classification report with threshold
+        # Classification report with threshold.  Uses >= so candidates
+        # whose score equals the percentile cutoff are SELECTED (the
+        # boundary case for a percentile threshold is to include the
+        # boundary candidate, not exclude them).
         threshold = np.percentile(scores, threshold_percentile * 100)
-        predictions = [1 if s > threshold else 0 for s in scores]
+        predictions = [1 if s >= threshold else 0 for s in scores]
 
         print(f"\n{'═' * 55}")
         print(f"  {self.name} — EVALUATION RESULTS")

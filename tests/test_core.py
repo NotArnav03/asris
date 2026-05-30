@@ -2889,6 +2889,39 @@ class TestConstrainedInsertionFCR:
         # Max single-candidate displacement bounded by n-1.
         assert 0 <= report.max_displacement <= len(cands) - 1
 
+    # --- ranking_utils.extract_skills_in_text (Task #50) --------------
+
+    def test_extract_skills_in_text_handles_java_javascript(self):
+        from ranking.ranking_utils import extract_skills_in_text
+        skills = ["java", "javascript", "go", "c++", "python"]
+        out = extract_skills_in_text(
+            skills,
+            "Senior JavaScript engineer with Python and C++"
+        )
+        assert "javascript" in out
+        assert "python" in out
+        assert "c++" in out
+        # The classic false positive: "java" must NOT be in the result
+        # just because "javascript" appears.
+        assert "java" not in out
+        # "go" must NOT match inside "Senior" or other substrings.
+        assert "go" not in out
+
+    def test_extract_skills_in_text_is_case_insensitive(self):
+        from ranking.ranking_utils import extract_skills_in_text
+        out = extract_skills_in_text(
+            ["python", "machine learning"],
+            "Senior PYTHON dev with Machine Learning experience"
+        )
+        assert out == {"python", "machine learning"}
+
+    def test_extract_skills_returns_empty_when_no_match(self):
+        from ranking.ranking_utils import extract_skills_in_text
+        assert extract_skills_in_text(
+            ["rust", "scala"], "Pure JavaScript and Python work"
+        ) == set()
+
+
     def test_pareto_frontier_monotone_in_threshold(self):
         # As the AIR threshold increases, achieved_air should not
         # DECREASE (the algorithm can always satisfy a looser

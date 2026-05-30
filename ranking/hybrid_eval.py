@@ -1,10 +1,14 @@
 import pandas as pd
+import sys
 from pathlib import Path
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.metrics import classification_report, roc_auc_score
 from tqdm import tqdm
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from ranking.ranking_utils import extract_skills_in_text  # noqa: E402
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 PROCESSED_RESUME_DIR = BASE_DIR / "data" / "processed" / "resumes_cleaned"
@@ -42,12 +46,13 @@ for file in PROCESSED_RESUME_DIR.glob("*.txt"):
 all_skill_names = [s.lower() for s in skills_map["skill_name"].tolist()]
 resume_skill_map = {}
 
+# Look-around-anchored skill matching (look-around prevents "java"
+# matching inside "javascript" and admits "c++"/"c#" via non-word
+# boundary lookups).  See ranking.ranking_utils.extract_skills_in_text.
 for filename, text in resume_texts.items():
-    matched = set()
-    for skill in all_skill_names:
-        if skill in text:
-            matched.add(skill)
-    resume_skill_map[filename] = matched
+    resume_skill_map[filename] = extract_skills_in_text(
+        all_skill_names, text,
+    )
 
 # Load SBERT
 print("Loading SBERT...")
