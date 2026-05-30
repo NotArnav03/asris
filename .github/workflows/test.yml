@@ -118,6 +118,22 @@ jobs:
           path: pytest.log
           if-no-files-found: warn
 
+      - name: Print pytest.log to stdout (always)
+        # Echo the captured log into the step output stream so the
+        # raw failure shows up in the public job log (which IS
+        # accessible without auth on public repos via the API
+        # endpoint /actions/runs/{id}/jobs/{jid}/logs).
+        if: always()
+        shell: bash
+        run: |
+          if [ -f pytest.log ]; then
+            echo "================ PYTEST.LOG START ================"
+            cat pytest.log
+            echo "================ PYTEST.LOG END   ================"
+          else
+            echo "pytest.log not found"
+          fi
+
       - name: Render failing-test summary on workflow page (always)
         # GITHUB_STEP_SUMMARY is rendered as markdown on the public
         # workflow run page — anyone with the repo URL can read it
