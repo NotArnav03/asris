@@ -17,10 +17,29 @@ logger = get_logger("evaluation.metrics")
 
 # ─── Core Ranking Metrics ────────────────────────────────────────
 
-def precision_at_k(y_true: list[int], y_scores: list[float], k: int) -> float:
+def _check_aligned(y_true, y_scores) -> None:
+    """Common preconditions for all ranking metrics.
+
+    Raises ValueError when lengths differ — silently truncating to the
+    shorter list, as numpy would do, hides off-by-one bugs in caller
+    code.  Audit-critical metric functions must be strict.
     """
-    Precision@K: fraction of top-K results that are relevant.
+    if len(y_true) != len(y_scores):
+        raise ValueError(
+            f"y_true (len={len(y_true)}) and y_scores "
+            f"(len={len(y_scores)}) must be the same length"
+        )
+
+
+def precision_at_k(y_true: list, y_scores: list, k: int) -> float:
+    """Precision@K: fraction of top-K results that are relevant.
+
+    Assumes BINARY relevance (y_true entries 0 or 1).  Non-binary input
+    is summed as graded weight, which gives meaningful values for
+    graded relevance but the metric is no longer strictly "precision";
+    callers requesting graded support should use NDCG instead.
     """
+    _check_aligned(y_true, y_scores)
     if k <= 0 or len(y_true) == 0:
         return 0.0
 
@@ -29,10 +48,9 @@ def precision_at_k(y_true: list[int], y_scores: list[float], k: int) -> float:
     return relevant / k
 
 
-def recall_at_k(y_true: list[int], y_scores: list[float], k: int) -> float:
-    """
-    Recall@K: fraction of all relevant items found in top-K.
-    """
+def recall_at_k(y_true: list, y_scores: list, k: int) -> float:
+    """Recall@K: fraction of all relevant items found in top-K."""
+    _check_aligned(y_true, y_scores)
     total_relevant = sum(y_true)
     if total_relevant == 0 or k <= 0:
         return 0.0
@@ -42,76 +60,120 @@ def recall_at_k(y_true: list[int], y_scores: list[float], k: int) -> float:
     return found_relevant / total_relevant
 
 
-def ndcg_at_k(y_true: list[int], y_scores: list[float], k: int) -> float:
+def ndcg_at_k(
+    y_true: list, y_scores: list, k: int,
+    gain: str = "linear",
+) -> float:
+    """Normalized Discounted Cumulative Gain @ K.
+
+    Args:
+        y_true: relevance labels (binary or graded integer)
+        y_scores: predicted scores
+        k: cutoff rank
+        gain: "linear" (DCG numerator = rel) or "exponential"
+              (DCG numerator = 2^rel - 1).  Linear is fine for binary
+              relevance (the two formulas agree on {0,1}); for graded
+              relevance the exponential form is the canonical Burges /
+              LambdaMART definition and should be used.
+
+    DCG@K = Σ_{rank=0..K-1} g(rel_rank) / log2(rank + 2)
+    NDCG@K = DCG@K / IDCG@K
+
+    Returns 0.0 when k <= 0, when y_true is empty, or when the ideal
+    DCG is zero (i.e. no relevant items at all).
     """
-    Normalized Discounted Cumulative Gain @ K.
-    Measures ranking quality — rewards relevant items ranked higher.
-    """
+    _check_aligned(y_true, y_scores)
     if k <= 0 or len(y_true) == 0:
         return 0.0
+    if gain not in ("linear", "exponential"):
+        raise ValueError(
+            f"gain must be 'linear' or 'exponential', got {gain!r}"
+        )
+
+    def _g(rel):
+        return rel if gain == "linear" else (2 ** rel - 1)
 
     sorted_indices = np.argsort(y_scores)[::-1][:k]
 
-    # DCG
     dcg = 0.0
     for rank, idx in enumerate(sorted_indices):
-        rel = y_true[idx]
-        dcg += rel / np.log2(rank + 2)  # rank+2 because log2(1)=0
+        dcg += _g(y_true[idx]) / np.log2(rank + 2)  # rank+2 because log2(1)=0
 
-    # Ideal DCG
     ideal_sorted = sorted(y_true, reverse=True)[:k]
     idcg = 0.0
     for rank, rel in enumerate(ideal_sorted):
-        idcg += rel / np.log2(rank + 2)
+        idcg += _g(rel) / np.log2(rank + 2)
 
     if idcg == 0:
         return 0.0
-
     return dcg / idcg
 
 
-def mean_reciprocal_rank(y_true: list[int], y_scores: list[float]) -> float:
+def mean_reciprocal_rank(y_true: list, y_scores: list) -> float:
+    """MRR: 1 / rank of the first relevant result.
+
+    Treats y_true[i] >= 1 as relevant (not strict equality to 1) so
+    graded labels work correctly.  Returns 0.0 when no relevant
+    items are present.
     """
-    MRR: 1/rank of the first relevant result.
-    """
+    _check_aligned(y_true, y_scores)
     sorted_indices = np.argsort(y_scores)[::-1]
 
     for rank, idx in enumerate(sorted_indices):
-        if y_true[idx] == 1:
+        if y_true[idx] >= 1:
             return 1.0 / (rank + 1)
-
     return 0.0
 
 
-def average_precision(y_true: list[int], y_scores: list[float]) -> float:
+def average_precision(y_true: list, y_scores: list) -> float:
+    """Average Precision: area under the precision-recall curve.
+
+    Assumes BINARY relevance.  Items with y_true[i] >= 1 count as
+    positives; the denominator is the count of positives.
     """
-    Average Precision: area under the precision-recall curve.
-    """
+    _check_aligned(y_true, y_scores)
     sorted_indices = np.argsort(y_scores)[::-1]
     relevant_count = 0
     precision_sum = 0.0
 
     for rank, idx in enumerate(sorted_indices):
-        if y_true[idx] == 1:
+        if y_true[idx] >= 1:
             relevant_count += 1
             precision_sum += relevant_count / (rank + 1)
 
-    total_relevant = sum(y_true)
+    total_relevant = sum(1 for v in y_true if v >= 1)
     if total_relevant == 0:
         return 0.0
-
     return precision_sum / total_relevant
 
 
 # ─── Classification Metrics ──────────────────────────────────────
 
-def compute_roc_auc(y_true: list[int], y_scores: list[float]) -> float:
-    """Compute ROC-AUC score."""
+def compute_roc_auc(y_true: list, y_scores: list) -> Optional[float]:
+    """Compute ROC-AUC score.
+
+    Returns None when sklearn refuses (typically: only one class
+    present in y_true).  The prior version silently returned 0.0
+    in that case, which is a real score in the [0, 1] range and
+    therefore indistinguishable from "the model is anti-correlated
+    with truth".  None is the honest answer.
+    """
+    _check_aligned(y_true, y_scores)
     from sklearn.metrics import roc_auc_score
+    import warnings
     try:
-        return roc_auc_score(y_true, y_scores)
-    except ValueError:
-        return 0.0
+        # sklearn now warns + returns NaN for single-class instead of
+        # raising; suppress the warning since we surface None ourselves.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            val = float(roc_auc_score(y_true, y_scores))
+        # NaN -> undefined (single class present or other degeneracy).
+        if val != val:  # NaN check
+            return None
+        return val
+    except ValueError as e:
+        logger.debug("ROC-AUC undefined: %s", e)
+        return None
 
 
 def compute_classification_report(
@@ -140,12 +202,26 @@ class RankingEvaluator:
     def add_query(
         self,
         query_id: str,
-        y_true: list[int],
-        y_scores: list[float],
+        y_true: list,
+        y_scores: list,
     ):
-        """Add results for a single query."""
+        """Add results for a single query.
+
+        Enforces equal-length inputs and a non-empty list — silently
+        accepting mismatched lengths would let off-by-one errors in
+        caller code propagate as quietly-wrong metrics.
+        """
+        if len(y_true) != len(y_scores):
+            raise ValueError(
+                f"add_query({query_id!r}): y_true ({len(y_true)}) "
+                f"and y_scores ({len(y_scores)}) must align"
+            )
+        if not y_true:
+            raise ValueError(
+                f"add_query({query_id!r}): empty input rejected"
+            )
         self.query_results[query_id] = {
-            "y_true": list(y_true),
+            "y_true":   list(y_true),
             "y_scores": list(y_scores),
         }
 
@@ -185,25 +261,43 @@ class RankingEvaluator:
 
         # Compute means
         mean_metrics = {
-            metric: round(np.mean(values), 4)
+            metric: round(float(np.mean(values)), 4)
             for metric, values in aggregated.items()
         }
 
-        # Compute MAP
-        mean_metrics["MAP"] = mean_metrics.pop("AP", 0.0)
+        # MAP = mean of per-query Average Precisions.
+        if "AP" in mean_metrics:
+            mean_metrics["MAP"] = mean_metrics["AP"]
 
-        # Overall ROC-AUC (flat)
-        all_y_true = []
-        all_y_scores = []
+        # ROC-AUC: report BOTH the flat (concatenated) score and the
+        # mean of per-query scores.  Flat ROC-AUC is sensitive to
+        # cross-query score-scale differences (scores not comparable
+        # across queries); per-query mean is the correct "average
+        # ranking quality per query" measurement.
+        all_y_true: list = []
+        all_y_scores: list = []
+        per_query_aucs: list = []
         for data in self.query_results.values():
             all_y_true.extend(data["y_true"])
             all_y_scores.extend(data["y_scores"])
-        mean_metrics["ROC-AUC"] = round(compute_roc_auc(all_y_true, all_y_scores), 4)
+            auc_q = compute_roc_auc(data["y_true"], data["y_scores"])
+            if auc_q is not None:
+                per_query_aucs.append(auc_q)
+
+        flat_auc = compute_roc_auc(all_y_true, all_y_scores)
+        mean_metrics["ROC-AUC_flat"] = (
+            None if flat_auc is None else round(flat_auc, 4)
+        )
+        mean_metrics["ROC-AUC_mean_per_query"] = (
+            round(float(np.mean(per_query_aucs)), 4) if per_query_aucs else None
+        )
+        # Legacy key retained for backwards compat: defaults to flat.
+        mean_metrics["ROC-AUC"] = mean_metrics["ROC-AUC_flat"]
 
         return {
-            "aggregate": mean_metrics,
+            "aggregate":   mean_metrics,
             "num_queries": len(self.query_results),
-            "per_query": per_query,
+            "per_query":   per_query,
         }
 
     def print_report(self, results: Optional[dict] = None):

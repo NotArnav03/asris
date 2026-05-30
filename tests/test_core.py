@@ -180,6 +180,77 @@ class TestEvaluationMetrics:
         assert "NDCG@5" in results
         assert "ROC-AUC" in results
 
+    # --- Metric hardening (Task #49) ----------------------------------
+
+    def test_metrics_raise_on_mismatched_lengths(self):
+        from evaluation.metrics import (
+            precision_at_k, recall_at_k, ndcg_at_k,
+            mean_reciprocal_rank, average_precision, compute_roc_auc,
+        )
+        with pytest.raises(ValueError, match="same length"):
+            precision_at_k([1, 0], [0.9], 1)
+        with pytest.raises(ValueError, match="same length"):
+            recall_at_k([1, 0], [0.9], 1)
+        with pytest.raises(ValueError, match="same length"):
+            ndcg_at_k([1, 0], [0.9], 1)
+        with pytest.raises(ValueError, match="same length"):
+            mean_reciprocal_rank([1, 0], [0.9])
+        with pytest.raises(ValueError, match="same length"):
+            average_precision([1, 0], [0.9])
+        with pytest.raises(ValueError, match="same length"):
+            compute_roc_auc([1, 0], [0.9])
+
+    def test_roc_auc_returns_none_on_single_class(self):
+        from evaluation.metrics import compute_roc_auc
+        # All zeros: sklearn refuses; we should get None, not 0.0
+        assert compute_roc_auc([0, 0, 0], [0.1, 0.2, 0.3]) is None
+        assert compute_roc_auc([1, 1, 1], [0.1, 0.2, 0.3]) is None
+
+    def test_ndcg_supports_exponential_gain_for_graded_relevance(self):
+        from evaluation.metrics import ndcg_at_k
+        # Graded relevance — linear and exponential gain produce
+        # different DCG values; both must be in [0, 1] and equal 1.0
+        # for the IDEAL ranking.
+        y_true = [3, 2, 1, 0]
+        y_scores = [0.9, 0.8, 0.7, 0.6]   # ideal ordering
+        lin = ndcg_at_k(y_true, y_scores, 4, gain="linear")
+        exp = ndcg_at_k(y_true, y_scores, 4, gain="exponential")
+        assert abs(lin - 1.0) < 1e-9
+        assert abs(exp - 1.0) < 1e-9
+
+    def test_ndcg_rejects_invalid_gain(self):
+        from evaluation.metrics import ndcg_at_k
+        with pytest.raises(ValueError, match="gain must be"):
+            ndcg_at_k([1, 0], [0.9, 0.1], 2, gain="bogus")
+
+    def test_add_query_rejects_empty(self):
+        from evaluation.metrics import RankingEvaluator
+        e = RankingEvaluator(k_values=[1])
+        with pytest.raises(ValueError, match="empty"):
+            e.add_query("q", [], [])
+
+    def test_add_query_rejects_mismatched_lengths(self):
+        from evaluation.metrics import RankingEvaluator
+        e = RankingEvaluator(k_values=[1])
+        with pytest.raises(ValueError, match="align"):
+            e.add_query("q", [1, 0], [0.9])
+
+    def test_evaluator_exposes_both_flat_and_per_query_roc_auc(self):
+        from evaluation.metrics import RankingEvaluator
+        e = RankingEvaluator(k_values=[1, 3])
+        e.add_query("q1", [1, 0, 1], [0.9, 0.5, 0.7])
+        e.add_query("q2", [0, 1, 0], [0.3, 0.9, 0.4])
+        agg = e.compute_all()["aggregate"]
+        assert "ROC-AUC_flat" in agg
+        assert "ROC-AUC_mean_per_query" in agg
+        assert "ROC-AUC" in agg   # legacy key retained
+        assert "MAP" in agg
+
+    def test_mrr_treats_graded_labels_correctly(self):
+        from evaluation.metrics import mean_reciprocal_rank
+        # First positive (>= 1) is at index 1 (score 0.8); MRR = 1/2
+        assert mean_reciprocal_rank([0, 2, 0, 0], [0.9, 0.8, 0.7, 0.6]) == 0.5
+
     def test_ranking_evaluator(self):
         from evaluation.metrics import RankingEvaluator
         evaluator = RankingEvaluator(k_values=[1, 3])
