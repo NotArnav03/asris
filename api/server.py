@@ -321,9 +321,26 @@ def get_explainer():
     return _explainer
 
 
-@app.on_event("startup")
-async def startup_event():
-    get_embedding_manager()
+# NOTE: a previous @app.on_event("startup") handler eagerly invoked
+# get_embedding_manager() to pre-warm the SBERT model.  That was
+# removed for two reasons:
+#
+#   1. It transitively imported sentence-transformers / torch at
+#      startup, which broke TestClient-based tests on hosts that
+#      don't have the ML stack installed (every CI runner with the
+#      minimal dep list).  TestClient triggers the lifespan startup
+#      on first request, so the import failure cascaded into 100%
+#      test-class failure.
+#   2. The eager preload was a latency optimisation, not a
+#      correctness requirement.  get_embedding_manager() is lazy and
+#      every endpoint that needs it calls it on demand — the first
+#      /rank or /audit request pays the model-load cost once, after
+#      which the singleton is hot for all subsequent calls.
+#
+# Production deployments that want to pay the cost up-front can
+# either issue a single warm-up request as part of their healthcheck
+# rollout, or restore a lifespan handler with explicit error
+# handling for missing optional deps.
 
 
 # ─── Request/Response Models ────────────────────────────────────
