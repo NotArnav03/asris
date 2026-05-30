@@ -1486,9 +1486,12 @@ class TestBiasDetector:
     def test_cutoff_method_top_k_uses_rank_threshold(self):
         from fairness.bias_detector import BiasDetector
         scores = {f"r{i}.txt": 0.1 * i for i in range(10)}
-        texts = {k: "John Smith\nEng" for k in scores}
+        # Distinct bodies so the dedup pass doesn't collapse them.
+        texts = {f"r{i}.txt": f"Candidate {i}\nEng resume {i}"
+                 for i in range(10)}
         audit = BiasDetector().audit_ranking_bias(
             texts, scores, cutoff_method="top_k", top_k=3,
+            dedup=False,
         )
         assert audit["cutoff_method"] == "top_k"
         assert audit["cutoff_top_k"] == 3
@@ -1498,9 +1501,12 @@ class TestBiasDetector:
     def test_cutoff_method_percentile_uses_score_percentile(self):
         from fairness.bias_detector import BiasDetector
         scores = {f"r{i}.txt": float(i) for i in range(101)}  # 0..100
-        texts = {k: "John\nEng" for k in scores}
+        # Distinct bodies so the dedup pass doesn't collapse them.
+        texts = {f"r{i}.txt": f"Candidate {i}\nEng resume body {i}"
+                 for i in range(101)}
         audit = BiasDetector().audit_ranking_bias(
             texts, scores, cutoff_method="percentile", percentile=10,
+            dedup=False,
         )
         assert audit["cutoff_method"] == "percentile"
         # Top 10% -> 90th percentile by score = 90.0

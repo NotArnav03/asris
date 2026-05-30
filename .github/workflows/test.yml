@@ -1,0 +1,130 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Sequential matrix runs keep cache warm and surface single-version
+# regressions before any cross-version subtleties.
+jobs:
+  test:
+    name: pytest (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 is our floor; 3.12 is the headline target.  3.13 / 3.14
+        # are deliberately excluded until upstream spaCy / pydantic
+        # publish wheels — the legacy normaliser tests fail on those
+        # versions for reasons unrelated to FAIMR.
+        python-version: ['3.11', '3.12']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest pytest-cov
+          # Test-only minimal subset.  Most of FAIMR's heavy deps
+          # (torch, spacy, sentence-transformers) are NOT exercised by
+          # the unit / fairness suite — installing them inflates CI
+          # time without buying coverage.  The bias_detector +
+          # classifier + ranker paths only need the deps below.
+          python -m pip install \
+            "pandas>=2.0.0" \
+            "numpy>=1.24.0" \
+            "scikit-learn>=1.3.0" \
+            "scipy>=1.11.0" \
+            "fastapi>=0.104.0" \
+            "uvicorn>=0.24.0" \
+            "pydantic>=2.0.0" \
+            "httpx>=0.27.0" \
+            "throttled-py>=3.3.0" \
+            "python-multipart>=0.0.6" \
+            "tqdm>=4.66.0" \
+            "pyyaml>=6.0.0"
+
+      - name: Run fairness + classifier + ranker test suite
+        run: |
+          pytest tests/test_core.py \
+            -v \
+            --tb=short \
+            -k "TestBiasDetector or TestNameClassifier or TestCounterfactualRobustness or TestSurnameCoverage or TestConstrainedInsertionFCR or TestApiHardening or TestFairnessRanker or TestEvaluationMetrics" \
+            --cov=fairness \
+            --cov=ranking \
+            --cov=evaluation \
+            --cov-report=xml \
+            --cov-report=term-missing \
+            --cov-fail-under=70
+
+      - name: Upload coverage XML (3.12 only)
+        if: matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: warn
+
+  # Smoke-test that the corpus / surname / model artefacts the
+  # classifier loads at runtime are well-formed and the model card's
+  # schema validation passes.
+  artefacts:
+    name: artefact integrity check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install minimal deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pandas numpy scikit-learn scipy
+
+      - name: Verify training corpus integrity
+        run: |
+          python -c "
+          import pandas as pd
+          df = pd.read_csv('data/names/training_corpus.csv',
+                           keep_default_na=False, na_values=[''])
+          assert len(df) > 40000, f'corpus too small: {len(df)} rows'
+          for col in ('name', 'p_female', 'p_male', 'weight', 'culture', 'source'):
+              assert col in df.columns, f'missing column {col!r}'
+          assert df['p_female'].between(0, 1).all()
+          assert df['culture'].nunique() >= 5, 'too few culture clusters'
+          print(f'training_corpus.csv OK: {len(df)} rows, '
+                f'{df[\"culture\"].nunique()} cultures')
+          "
+
+      - name: Verify surname denylist + holdout coverage
+        run: |
+          python data/names/validate_surnames.py
+
+      - name: Verify model card schema
+        run: |
+          python -c "
+          import json, sys
+          sys.path.insert(0, '.')
+          from fairness.names.classifier import validate_model_card
+          card = json.load(open('fairness/names/model_card.json'))
+          errors = validate_model_card(card)
+          if errors:
+              print('Model card schema errors:', errors)
+              sys.exit(1)
+          print('model_card.json OK:', card['version'])
+          "

@@ -1,5 +1,9 @@
 # FAIMR — Fairness-Aware Interpretable Multi-Signal Ranking
 
+[![tests](https://github.com/NotArnav03/FAIMR/actions/workflows/test.yml/badge.svg)](https://github.com/NotArnav03/FAIMR/actions/workflows/test.yml)
+[![python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue)](https://github.com/NotArnav03/FAIMR)
+[![coverage](https://img.shields.io/badge/fairness%20coverage-70%25%2B-brightgreen)](#testing)
+
 An end-to-end AI system that matches job descriptions (JDs) to resumes using multi-signal ranking — combining semantic embeddings, skill-based matching, and learned relevance models to produce explainable, fair candidate shortlists.
 
 ## Architecture
