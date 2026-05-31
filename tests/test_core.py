@@ -2334,6 +2334,28 @@ class TestNameClassifier:
         assert "errors" in audit["model_card_validation"]
 
 
+    # --- Performance benchmarks recorded in model card (Task #57) -----
+
+    def test_model_card_has_performance_block(self):
+        # If a recent benchmark run wrote results under
+        # model_card.performance, schema-check the structure.  Absent
+        # is acceptable (means no benchmark has been recorded yet).
+        import json
+        from pathlib import Path
+        card = json.loads(
+            Path("fairness/names/model_card.json").read_text(encoding="utf-8")
+        )
+        if "performance" not in card:
+            import pytest
+            pytest.skip("no performance block in model card")
+        perf = card["performance"]
+        assert "seed" in perf
+        assert "stages" in perf
+        # The three stages our benchmark script populates.
+        for stage in ("classifier_predict_many", "audit", "fcr"):
+            assert stage in perf["stages"]
+
+
     def test_overall_calibration_target_met(self):
         # The model_card declares calibration_target.overall_meets_target.
         # If this regresses (e.g. someone re-trains with worse data),

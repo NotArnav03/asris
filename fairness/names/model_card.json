@@ -177,5 +177,39 @@
       "hits": 18,
       "coverage": 0.9
     }
+  },
+  "performance": {
+    "seed": 20251128,
+    "n_repeats": 5,
+    "stages": {
+      "classifier_predict_many": {
+        "n": 100,
+        "p50_s": 0.030505,
+        "p95_s": 0.037686,
+        "per_second": 3278.1
+      },
+      "audit": {
+        "n_100": {
+          "n_resumes": 100,
+          "p50_s": 0.1096,
+          "p95_s": 0.1123,
+          "per_resume_ms_p50": 1.096,
+          "per_resume_ms_p95": 1.123
+        },
+        "n_500": {
+          "n_resumes": 500,
+          "p50_s": 0.3992,
+          "p95_s": 0.4673,
+          "per_resume_ms_p50": 0.798,
+          "per_resume_ms_p95": 0.935
+        }
+      },
+      "fcr": {
+        "n_candidates": 1000,
+        "p50_s": 0.0193,
+        "p95_s": 0.0214,
+        "per_candidate_us": 19.3
+      }
+    }
   }
 }
