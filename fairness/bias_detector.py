@@ -850,23 +850,37 @@ class BiasDetector:
     def detect_gender_proxy_scored(
         text: str,
         _precomputed_name_results: dict = None,
+        text_kind: str = "auto",
     ) -> dict:
-        """
-        Detect gender from resume text and return a scored result.
+        """Detect gender from resume / bio text and return a scored result.
+
+        Args:
+            text: Raw input text.
+            _precomputed_name_results: Internal kwarg; threading the
+                pre-batched classifier results from audit_ranking_bias.
+            text_kind: One of
+                "resume"  — assume the candidate's name is in the
+                            header (first 1-8 lines).  Name scan runs
+                            normally.  Default for production use.
+                "bio"     — body-text mode for third-person biographies
+                            (e.g., Bias in Bios).  The candidate's
+                            name is NOT in the header; suppress the
+                            name scan and lean exclusively on
+                            pronouns + honorifics.  Closes the failure
+                            mode where the first Title-cased noun in
+                            body text ("Member", "Delhi", "American")
+                            is mistaken for the candidate's name.
+                "auto"    — (default) heuristically pick "bio" when
+                            pronoun density is high and no clear
+                            FirstName-LastName pattern sits on line 1;
+                            else "resume".
 
         Returns:
             {
                 "gender":     "male" | "female" | "unknown",
                 "confidence": float in [0.0, 1.0],
-                "signals": {
-                    "male_pronoun":  int,   # count of male pronoun matches
-                    "female_pronoun": int,
-                    "male_title":    bool,
-                    "female_title":  bool,
-                    "neutral_title": bool,
-                    "male_name":     bool,
-                    "female_name":   bool,
-                }
+                "signals": { ... },
+                "text_kind":  the resolved kind ("resume" / "bio").
             }
 
         Confidence heuristic (uncalibrated):
@@ -987,12 +1001,44 @@ class BiasDetector:
         #     marked unisex_name=True but neither male_name nor
         #     female_name fires.
         # Extract candidate-token lists for each cascade strategy.
+        # --- text_kind resolution ----------------------------------------
+        # Determines whether to run the name scan.  Bio-style text
+        # (third-person body paragraphs, name redacted) ends up with
+        # the first Title-cased body noun as the "name", which then
+        # overrides the pronoun signal.  See benchmarks/bias_in_bios/
+        # for the failure mode this closes.
+        resolved_text_kind = text_kind
+        if text_kind == "auto":
+            # Bio-detection heuristic: third-person pronoun density is
+            # the strongest signal.  Real resumes rarely use third-
+            # person pronouns about the candidate themselves (they're
+            # first-person fragments or skill lists), so a non-trivial
+            # density of he/she is near-conclusive evidence of a
+            # third-person biography.  Pronoun density dominates the
+            # header-shape check — without that priority, a bio that
+            # starts "Dr. Loder studies..." would be misread as the
+            # "Dr. Smith" resume header pattern.
+            n_he = signals["male_pronoun"]
+            n_she = signals["female_pronoun"]
+            total_pron = n_he + n_she
+            word_count = max(1, len(text.split()))
+            pron_density = total_pron / word_count
+            if pron_density > 0.015:
+                resolved_text_kind = "bio"
+            else:
+                resolved_text_kind = "resume"
+
         # See _extract_header_token_strategies / _pick_name_signal
         # for the cascade rationale.  The two-phase split (extract
         # then resolve) lets audit_ranking_bias batch the classifier
         # call across every resume in the corpus — one big
         # model.predict_proba instead of one per resume.
-        strategy_lists = BiasDetector._extract_header_token_strategies(text)
+        if resolved_text_kind == "bio":
+            # Suppress name scan entirely.  Pronouns + honorifics
+            # carry the signal.
+            strategy_lists = []
+        else:
+            strategy_lists = BiasDetector._extract_header_token_strategies(text)
 
         if _precomputed_name_results is not None:
             results_by_token = _precomputed_name_results
@@ -1064,10 +1110,16 @@ class BiasDetector:
             female_score += 5
 
         # 5. Decision + confidence
-        if male_score > female_score and male_score >= 2:
+        # The minimum-score gate prevents a single incidental pronoun
+        # in a resume (e.g. "She led a team of 5") from determining
+        # the candidate's gender.  In bio mode that risk is gone —
+        # the bio IS third-person about the candidate — so even one
+        # clear pronoun is decisive.  Threshold drops to >= 1 there.
+        min_decisive_score = 1 if resolved_text_kind == "bio" else 2
+        if male_score > female_score and male_score >= min_decisive_score:
             gender = "male"
             dominant, other = male_score, female_score
-        elif female_score > male_score and female_score >= 2:
+        elif female_score > male_score and female_score >= min_decisive_score:
             gender = "female"
             dominant, other = female_score, male_score
         else:
@@ -1089,7 +1141,12 @@ class BiasDetector:
         else:
             confidence = 0.35
 
-        return {"gender": gender, "confidence": round(confidence, 3), "signals": signals}
+        return {
+            "gender": gender,
+            "confidence": round(confidence, 3),
+            "signals": signals,
+            "text_kind": resolved_text_kind,
+        }
 
     @staticmethod
     def detect_gender_proxy(text: str) -> str:

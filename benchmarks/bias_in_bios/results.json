@@ -1,0 +1,226 @@
+{
+  "seed": 20251128,
+  "subsample_size": 10000,
+  "attribution": {
+    "n": 10000,
+    "coverage": 0.9859,
+    "accuracy_when_covered": 0.9768,
+    "accuracy_overall": 0.963,
+    "confusion": {
+      "male_correct": 5227,
+      "male_wrong": 156,
+      "female_correct": 4403,
+      "female_wrong": 73,
+      "unknown_male": 60,
+      "unknown_female": 81
+    },
+    "elapsed_seconds": 34.0
+  },
+  "tpr_gap": {
+    "occupations": [
+      {
+        "profession": "accountant",
+        "male_tpr": 0.5632,
+        "female_tpr": 0.6296,
+        "abs_gap": 0.0664,
+        "n": 423
+      },
+      {
+        "profession": "architect",
+        "male_tpr": 0.6181,
+        "female_tpr": 0.5989,
+        "abs_gap": 0.0192,
+        "n": 758
+      },
+      {
+        "profession": "attorney",
+        "male_tpr": 0.9081,
+        "female_tpr": 0.8693,
+        "abs_gap": 0.0388,
+        "n": 2443
+      },
+      {
+        "profession": "chiropractor",
+        "male_tpr": 0.4868,
+        "female_tpr": 0.4043,
+        "abs_gap": 0.0826,
+        "n": 199
+      },
+      {
+        "profession": "comedian",
+        "male_tpr": 0.5655,
+        "female_tpr": 0.6047,
+        "abs_gap": 0.0392,
+        "n": 211
+      },
+      {
+        "profession": "composer",
+        "male_tpr": 0.7493,
+        "female_tpr": 0.7246,
+        "abs_gap": 0.0247,
+        "n": 420
+      },
+      {
+        "profession": "dentist",
+        "male_tpr": 0.9093,
+        "female_tpr": 0.8833,
+        "abs_gap": 0.0261,
+        "n": 1094
+      },
+      {
+        "profession": "dietitian",
+        "male_tpr": 0.6087,
+        "female_tpr": 0.7044,
+        "abs_gap": 0.0957,
+        "n": 297
+      },
+      {
+        "profession": "dj",
+        "male_tpr": 0.4894,
+        "female_tpr": 0.3889,
+        "abs_gap": 0.1005,
+        "n": 112
+      },
+      {
+        "profession": "filmmaker",
+        "male_tpr": 0.7086,
+        "female_tpr": 0.6171,
+        "abs_gap": 0.0914,
+        "n": 525
+      },
+      {
+        "profession": "interior_designer",
+        "male_tpr": 0.2727,
+        "female_tpr": 0.4091,
+        "abs_gap": 0.1364,
+        "n": 110
+      },
+      {
+        "profession": "journalist",
+        "male_tpr": 0.7563,
+        "female_tpr": 0.7436,
+        "abs_gap": 0.0127,
+        "n": 1496
+      },
+      {
+        "profession": "model",
+        "male_tpr": 0.3137,
+        "female_tpr": 0.7522,
+        "abs_gap": 0.4384,
+        "n": 562
+      },
+      {
+        "profession": "nurse",
+        "male_tpr": 0.6311,
+        "female_tpr": 0.7691,
+        "abs_gap": 0.1379,
+        "n": 1421
+      },
+      {
+        "profession": "painter",
+        "male_tpr": 0.7462,
+        "female_tpr": 0.752,
+        "abs_gap": 0.0058,
+        "n": 581
+      },
+      {
+        "profession": "paralegal",
+        "male_tpr": 0.2174,
+        "female_tpr": 0.3636,
+        "abs_gap": 0.1462,
+        "n": 133
+      },
+      {
+        "profession": "pastor",
+        "male_tpr": 0.4067,
+        "female_tpr": 0.225,
+        "abs_gap": 0.1817,
+        "n": 190
+      },
+      {
+        "profession": "personal_trainer",
+        "male_tpr": 0.4211,
+        "female_tpr": 0.52,
+        "abs_gap": 0.0989,
+        "n": 107
+      },
+      {
+        "profession": "photographer",
+        "male_tpr": 0.8803,
+        "female_tpr": 0.8663,
+        "abs_gap": 0.0141,
+        "n": 1821
+      },
+      {
+        "profession": "physician",
+        "male_tpr": 0.8125,
+        "female_tpr": 0.8886,
+        "abs_gap": 0.0761,
+        "n": 3075
+      },
+      {
+        "profession": "poet",
+        "male_tpr": 0.6429,
+        "female_tpr": 0.7,
+        "abs_gap": 0.0571,
+        "n": 526
+      },
+      {
+        "profession": "professor",
+        "male_tpr": 0.9126,
+        "female_tpr": 0.9069,
+        "abs_gap": 0.0058,
+        "n": 8856
+      },
+      {
+        "profession": "psychologist",
+        "male_tpr": 0.632,
+        "female_tpr": 0.686,
+        "abs_gap": 0.0541,
+        "n": 1379
+      },
+      {
+        "profession": "rapper",
+        "male_tpr": 0.5,
+        "female_tpr": 0.3333,
+        "abs_gap": 0.1667,
+        "n": 105
+      },
+      {
+        "profession": "software_engineer",
+        "male_tpr": 0.5917,
+        "female_tpr": 0.5976,
+        "abs_gap": 0.0058,
+        "n": 518
+      },
+      {
+        "profession": "surgeon",
+        "male_tpr": 0.6413,
+        "female_tpr": 0.4578,
+        "abs_gap": 0.1834,
+        "n": 1019
+      },
+      {
+        "profession": "teacher",
+        "male_tpr": 0.5336,
+        "female_tpr": 0.6062,
+        "abs_gap": 0.0726,
+        "n": 1215
+      },
+      {
+        "profession": "yoga_teacher",
+        "male_tpr": 0.6111,
+        "female_tpr": 0.5047,
+        "abs_gap": 0.1064,
+        "n": 125
+      }
+    ],
+    "mean_abs_gap": 0.0887,
+    "max_abs_gap": 0.4384,
+    "comparison_published": {
+      "BoW+LR (De-Arteaga 2019)": 0.1,
+      "BERT (Romanov 2019)": 0.06,
+      "INLP-debiased BERT (Ravfogel 2020)": 0.03
+    }
+  }
+}

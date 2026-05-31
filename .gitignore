@@ -24,6 +24,11 @@ data/*
 # run; the timestamp fields churn constantly.  Hashes inside are
 # inspectable on demand via `python reproduce.py --check`.
 reproducibility_manifest.json
+
+# Benchmark dataset caches (downloaded on demand by the load scripts;
+# do NOT re-distribute through this repo).  Result JSONs ARE committed
+# so reviewers can see the reference numbers without re-running.
+benchmarks/*/_cache/
 *.csv
 *.pkl
 *.npy

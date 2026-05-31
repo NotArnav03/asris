@@ -876,6 +876,66 @@ class TestBiasDetector:
 
     # --- Classifier integration (Issue #3 / Task #14) -----------------
 
+    # --- Bio-mode detection (Bias in Bios benchmark, Task #59) -----
+
+    def test_third_person_bio_uses_bio_mode(self):
+        # Body-paragraph text with dense third-person pronouns is
+        # detected as a bio, suppressing the name scan that would
+        # otherwise pick "American" / "Member" / "Delhi" as a fake
+        # name token from the body text.
+        from fairness.bias_detector import BiasDetector
+        bio = (
+            "She specializes in development economics and worked at "
+            "the London School of Economics.  She received her PhD in "
+            "2003 and has published in the American Economic Review."
+        )
+        r = BiasDetector.detect_gender_proxy_scored(bio)
+        assert r["text_kind"] == "bio"
+        assert r["gender"] == "female"
+        # Crucially, the name signal does NOT fire — "American"
+        # would otherwise be picked as a male-leaning name token.
+        assert r["signals"]["name_source"] == "empty"
+
+    def test_resume_header_uses_resume_mode(self):
+        # Standard resume header — no dense pronouns — stays in
+        # resume mode and runs the name scan.
+        from fairness.bias_detector import BiasDetector
+        r = BiasDetector.detect_gender_proxy_scored(
+            "John Smith\nSoftware Engineer with 8 years experience"
+        )
+        assert r["text_kind"] == "resume"
+        assert r["gender"] == "male"
+
+    def test_explicit_text_kind_override(self):
+        from fairness.bias_detector import BiasDetector
+        bio_text = "She is a Master of Science graduate."
+        # Force resume mode -> name scan runs, "Master" might fire
+        forced = BiasDetector.detect_gender_proxy_scored(
+            bio_text, text_kind="resume",
+        )
+        assert forced["text_kind"] == "resume"
+        # Force bio mode -> name scan suppressed
+        forced_bio = BiasDetector.detect_gender_proxy_scored(
+            bio_text, text_kind="bio",
+        )
+        assert forced_bio["text_kind"] == "bio"
+        assert forced_bio["signals"]["name_source"] == "empty"
+
+    def test_bio_mode_requires_only_one_pronoun_to_decide(self):
+        # The min-decisive-score gate drops from >=2 (resume) to >=1
+        # (bio) because a third-person bio is unambiguous about whose
+        # gender the pronoun refers to.
+        from fairness.bias_detector import BiasDetector
+        single_pron_bio = (
+            "She is a senior architect at the firm and leads the "
+            "downtown office.  Her work has been featured in design "
+            "magazines internationally."
+        )
+        r = BiasDetector.detect_gender_proxy_scored(single_pron_bio)
+        assert r["text_kind"] == "bio"
+        assert r["gender"] == "female"
+
+
     def test_classifier_drives_name_signal_for_known_name(self):
         from fairness.bias_detector import BiasDetector
         r = BiasDetector.detect_gender_proxy_scored(
