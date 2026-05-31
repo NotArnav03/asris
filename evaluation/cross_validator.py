@@ -208,19 +208,27 @@ class CrossValidator:
         diffs = np.array(values_a) - np.array(values_b)
         d = float(np.mean(diffs) / np.std(diffs, ddof=1)) if np.std(diffs, ddof=1) > 0 else 0.0
 
-        mean_a = np.mean(values_a)
-        mean_b = np.mean(values_b)
-        winner = result_a.model_name if mean_a > mean_b else result_b.model_name
+        mean_a = float(np.mean(values_a))
+        mean_b = float(np.mean(values_b))
+        significant = bool(p_value < 0.05)
+        # "winner" reflects STATISTICAL SIGNIFICANCE.  Reporting the
+        # higher-mean model as winner when p > 0.05 is misleading —
+        # the difference isn't distinguishable from noise.  When the
+        # test fails to reject H0 we explicitly return "tie".
+        if not significant:
+            winner = "tie"
+        else:
+            winner = result_a.model_name if mean_a > mean_b else result_b.model_name
 
         return {
             "metric": metric,
             "model_a": result_a.model_name,
             "model_b": result_b.model_name,
-            "mean_a": round(float(mean_a), 4),
-            "mean_b": round(float(mean_b), 4),
+            "mean_a": round(mean_a, 4),
+            "mean_b": round(mean_b, 4),
             "t_statistic": round(float(t_stat), 4),
             "p_value": round(float(p_value), 6),
-            "significant": p_value < 0.05,
+            "significant": significant,
             "effect_size_d": round(d, 4),
             "effect_size_label": (
                 "negligible" if abs(d) < 0.2 else
@@ -229,6 +237,11 @@ class CrossValidator:
                 "large"
             ),
             "winner": winner,
+            # The "best-mean" model is retained as a separate field for
+            # callers who want the point estimate ignoring significance.
+            "higher_mean_model": (
+                result_a.model_name if mean_a > mean_b else result_b.model_name
+            ),
         }
 
     # ─── Formatting ──────────────────────────────────────────────

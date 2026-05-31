@@ -45,12 +45,19 @@ class LearningToRank:
         """
         self.model_type = model_type
         self.model = None
+        # Feature order is the SAME as the order they're appended in
+        # _extract_features below — these two must stay in sync.  The
+        # docstring previously listed 6 features but only 5 were
+        # actually appended (resume_wc was computed and discarded).
+        # Both lists now match: 7 features total.
         self.feature_names = [
             "sbert_similarity",
             "tfidf_similarity",
             "skill_coverage",
             "num_matched_skills",
             "keyword_overlap_ratio",
+            "resume_word_count",
+            "jd_word_count",
         ]
 
     def _extract_features(
@@ -125,6 +132,8 @@ class LearningToRank:
                 coverage,
                 len(matched),
                 kw_overlap,
+                resume_wc,
+                jd_wc,
             ])
             labels.append(row["label"])
             job_ids.append(job_id)
@@ -164,10 +173,13 @@ class LearningToRank:
         logger.info(f"Feature matrix: {X.shape}, Labels: {y.shape}")
         logger.info(f"Label distribution: 0={sum(y == 0)}, 1={sum(y == 1)}")
 
-        # Train/test split (by query for proper ranking evaluation)
-        unique_jobs = list(set(job_ids))
-        np.random.seed(LTR_RANDOM_STATE)
-        np.random.shuffle(unique_jobs)
+        # Train/test split (by query for proper ranking evaluation).
+        # Using a local Generator (instead of the global np.random
+        # state) so concurrent LTR runs don't perturb each other's
+        # shuffle order.  Reproducibility preserved via LTR_RANDOM_STATE.
+        unique_jobs = sorted(set(job_ids))   # sorted for stable input
+        rng = np.random.default_rng(LTR_RANDOM_STATE)
+        rng.shuffle(unique_jobs)
         split_idx = int(len(unique_jobs) * (1 - LTR_TEST_SIZE))
         train_jobs = set(unique_jobs[:split_idx])
         test_jobs = set(unique_jobs[split_idx:])
@@ -184,13 +196,14 @@ class LearningToRank:
         # Train model
         if self.model_type == "xgboost":
             import xgboost as xgb
+            # `use_label_encoder` was removed from xgboost >=1.6 and
+            # emits a noisy DeprecationWarning when still passed.  Dropped.
             self.model = xgb.XGBClassifier(
                 n_estimators=LTR_N_ESTIMATORS,
                 max_depth=LTR_MAX_DEPTH,
                 learning_rate=LTR_LEARNING_RATE,
                 random_state=LTR_RANDOM_STATE,
                 eval_metric="logloss",
-                use_label_encoder=False,
             )
         else:
             import lightgbm as lgb

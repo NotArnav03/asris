@@ -55,8 +55,14 @@ for _, row in tqdm(pairs.iterrows(), total=len(pairs)):
     scores.append(sim)
     labels.append(row["label"])
 
-threshold = sorted(scores)[int(len(scores) * 0.5)]
-predictions = [1 if s > threshold else 0 for s in scores]
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+from ranking.ranking_utils import classify_at_percentile  # noqa: E402
+
+# Median threshold (50th percentile) with >= boundary semantics.
+threshold, predictions = classify_at_percentile(scores, percentile=50.0)
+print(f"Threshold (median): {threshold:.4f}")
 
 print("\nClassification Report:")
 print(classification_report(labels, predictions))

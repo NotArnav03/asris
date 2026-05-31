@@ -2896,6 +2896,84 @@ class TestConstrainedInsertionFCR:
         # Max single-candidate displacement bounded by n-1.
         assert 0 <= report.max_displacement <= len(cands) - 1
 
+    # --- classify_at_percentile (Task #50) -----------------------------
+
+    def test_classify_at_percentile_median_uses_ge_boundary(self):
+        from ranking.ranking_utils import classify_at_percentile
+        # Median of [1,2,3,4,5] = 3.  >= 3 -> 1, else 0.
+        scores = [1.0, 2.0, 3.0, 4.0, 5.0]
+        threshold, preds = classify_at_percentile(scores, percentile=50.0)
+        assert threshold == 3.0
+        # Score equal to median IS selected (>= boundary, the fix
+        # over the prior strict > implementation).
+        assert preds == [0, 0, 1, 1, 1]
+
+    def test_classify_at_percentile_handles_empty(self):
+        from ranking.ranking_utils import classify_at_percentile
+        threshold, preds = classify_at_percentile([], percentile=75.0)
+        assert threshold == 0.0
+        assert preds == []
+
+    def test_classify_at_percentile_75th_selects_top_quartile(self):
+        from ranking.ranking_utils import classify_at_percentile
+        scores = list(range(100))   # 0..99
+        threshold, preds = classify_at_percentile(scores, percentile=75.0)
+        # 75th percentile of 0..99 ~ 74.25
+        assert 74.0 <= threshold <= 75.0
+        # Roughly 25% selected (depends on numpy interpolation).
+        assert 23 <= sum(preds) <= 27
+
+
+    # --- CrossValidator.paired_t_test (Task #49 partial) --------------
+
+    def test_paired_t_test_returns_tie_when_not_significant(self):
+        from evaluation.cross_validator import (
+            CrossValidator, CVResult, FoldResult,
+        )
+        # Two noisy CV runs with overlapping distributions -> p > 0.05
+        # -> tie.  Per-fold values chosen so the paired diff has
+        # non-zero variance and is not consistently signed.
+        a_vals = [0.80, 0.78, 0.83, 0.79, 0.82]
+        b_vals = [0.79, 0.82, 0.80, 0.81, 0.80]   # mean ~ same
+        a = CVResult(model_name="A", k_folds=5)
+        b = CVResult(model_name="B", k_folds=5)
+        for i in range(5):
+            a.fold_results.append(FoldResult(
+                fold_idx=i, train_size=10, test_size=2,
+                metrics={"ndcg": a_vals[i]},
+            ))
+            b.fold_results.append(FoldResult(
+                fold_idx=i, train_size=10, test_size=2,
+                metrics={"ndcg": b_vals[i]},
+            ))
+        result = CrossValidator.paired_t_test(a, b, "ndcg")
+        assert result["significant"] is False
+        assert result["winner"] == "tie"
+        # higher_mean_model still reports the point estimate even when
+        # the difference is not statistically significant.
+        assert result["higher_mean_model"] in ("A", "B")
+
+    def test_paired_t_test_picks_winner_when_significant(self):
+        from evaluation.cross_validator import (
+            CrossValidator, CVResult, FoldResult,
+        )
+        a = CVResult(model_name="A", k_folds=5)
+        b = CVResult(model_name="B", k_folds=5)
+        # Large consistent gap -> significant.
+        for i in range(5):
+            a.fold_results.append(FoldResult(
+                fold_idx=i, train_size=10, test_size=2,
+                metrics={"ndcg": 0.50 + 0.01 * i},
+            ))
+            b.fold_results.append(FoldResult(
+                fold_idx=i, train_size=10, test_size=2,
+                metrics={"ndcg": 0.80 + 0.01 * i},
+            ))
+        result = CrossValidator.paired_t_test(a, b, "ndcg")
+        assert result["significant"] is True
+        assert result["winner"] == "B"
+
+
     # --- ranking_utils.extract_skills_in_text (Task #50) --------------
 
     def test_extract_skills_in_text_handles_java_javascript(self):

@@ -42,9 +42,20 @@ resume_embeddings = {
     for filename, text in tqdm(resume_texts.items())
 }
 
-# Compute similarity
+# Compute similarity.  Missing pairs are SKIPPED (not silently
+# zeroed out as in a prior revision) — inserting 0 for a missing
+# embedding biases ROC-AUC because the missing pair always appears
+# at the bottom of the ranking and is treated as a "low score true
+# negative" regardless of its real label.  Skipping is the correct
+# behaviour: the pair contributes neither to scores nor labels.
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+from ranking.ranking_utils import classify_at_percentile  # noqa: E402
+
 scores = []
 labels = []
+n_skipped = 0
 
 print("Computing similarities...")
 for _, row in tqdm(pairs.iterrows(), total=len(pairs)):
@@ -53,17 +64,21 @@ for _, row in tqdm(pairs.iterrows(), total=len(pairs)):
     resume_emb = resume_embeddings.get(resume_file)
 
     if jd_emb is None or resume_emb is None:
-        scores.append(0)
-        labels.append(row["label"])
+        n_skipped += 1
         continue
 
     sim = cosine_similarity([jd_emb], [resume_emb])[0][0]
     scores.append(sim)
     labels.append(row["label"])
 
-# Use percentile threshold
-threshold = sorted(scores)[int(len(scores) * 0.75)]
-predictions = [1 if s > threshold else 0 for s in scores]
+if n_skipped:
+    print(f"Skipped {n_skipped} pairs with missing embeddings.")
+
+# 75th-percentile threshold — selects the top quartile.  Centralised
+# through classify_at_percentile so every baseline uses the same
+# threshold semantics (>=, not strict >).
+threshold, predictions = classify_at_percentile(scores, percentile=75.0)
+print(f"Threshold (75th pct): {threshold:.4f}")
 
 print("\nClassification Report:")
 print(classification_report(labels, predictions))

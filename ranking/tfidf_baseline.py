@@ -57,9 +57,16 @@ resume_vectors = {
     for filename, text in resume_texts.items()
 }
 
-# Compute similarity
+# Compute similarity.  Missing pairs are SKIPPED — see sbert_baseline.py
+# for the rationale.
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+from ranking.ranking_utils import classify_at_percentile  # noqa: E402
+
 scores = []
 labels = []
+n_skipped = 0
 
 print("Computing similarity scores...")
 for _, row in tqdm(pairs.iterrows(), total=len(pairs)):
@@ -68,17 +75,22 @@ for _, row in tqdm(pairs.iterrows(), total=len(pairs)):
     resume_vec = resume_vectors.get(resume_file)
 
     if jd_vec is None or resume_vec is None:
-        scores.append(0)
-        labels.append(row["label"])
+        n_skipped += 1
         continue
 
     sim = cosine_similarity(jd_vec, resume_vec)[0][0]
     scores.append(sim)
     labels.append(row["label"])
 
-# Better threshold (use median)
-threshold = sorted(scores)[int(len(scores) * 0.75)]
-predictions = [1 if s > threshold else 0 for s in scores]
+if n_skipped:
+    print(f"Skipped {n_skipped} pairs with missing vectors.")
+
+# 75th-percentile threshold — selects the top quartile.  Prior code
+# had a misleading "use median" comment but used 75% — fixed both
+# the threshold semantics (>= via classify_at_percentile) and the
+# comment so they agree.
+threshold, predictions = classify_at_percentile(scores, percentile=75.0)
+print(f"Threshold (75th pct): {threshold:.4f}")
 
 print("\nClassification Report:")
 print(classification_report(labels, predictions))

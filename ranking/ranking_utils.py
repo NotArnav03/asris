@@ -42,6 +42,35 @@ def _skill_pattern(skill: str) -> "re.Pattern":
     return _SKILL_PATTERN_CACHE[skill]
 
 
+def classify_at_percentile(
+    scores: list, percentile: float = 50.0,
+) -> tuple:
+    """Threshold ``scores`` at the given percentile and return
+    (threshold, predictions) where predictions are binary labels.
+
+    Centralised so every baseline uses the SAME semantics:
+
+      threshold = np.percentile(scores, percentile)
+      predictions = [1 if s >= threshold else 0 for s in scores]
+
+    The `>=` (not `>`) is intentional — a candidate scoring EXACTLY
+    at the percentile cutoff should be SELECTED (it ties the
+    boundary case rather than falling on the negative side).  The
+    prior baselines used strict `>`, which silently rejected
+    boundary candidates and gave slightly different counts than the
+    threshold computation implied.
+
+    Returns the threshold value alongside the predictions so
+    callers can report what cutoff was actually used.
+    """
+    if not scores:
+        return 0.0, []
+    import numpy as np
+    threshold = float(np.percentile(scores, percentile))
+    predictions = [1 if s >= threshold else 0 for s in scores]
+    return threshold, predictions
+
+
 def extract_skills_in_text(skills: list, text: str) -> set:
     """Return the subset of ``skills`` that appear in ``text``.
 
