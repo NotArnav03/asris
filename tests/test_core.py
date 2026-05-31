@@ -2616,10 +2616,16 @@ class TestApiHardening:
 
     def _client(self):
         # Defer import — the server module imports heavy ML deps on load.
+        # raise_server_exceptions=False so server-side errors surface
+        # as 5xx HTTP responses (which is what real clients see) rather
+        # than as Python exceptions inside the test — important on CI
+        # where sentence-transformers isn't installed and any endpoint
+        # that touches it returns 503 from get_embedding_manager() via
+        # _MLDepMissing.
         try:
             from fastapi.testclient import TestClient
             from api.server import app
-            return TestClient(app)
+            return TestClient(app, raise_server_exceptions=False)
         except Exception as e:
             import pytest
             pytest.skip(f"FastAPI test stack unavailable: {e}")
@@ -2653,7 +2659,8 @@ class TestApiHardening:
         from fastapi.testclient import TestClient
         from api.server import app, _reset_rate_limiters
         _reset_rate_limiters()
-        return TestClient(app)
+        # See _client() for the rationale on raise_server_exceptions=False.
+        return TestClient(app, raise_server_exceptions=False)
 
     def test_rate_limit_429_includes_retry_after_header(self):
         client = self._client_with_reset()
@@ -2721,7 +2728,7 @@ class TestApiHardening:
         import importlib, api.server
         importlib.reload(api.server)
         from fastapi.testclient import TestClient
-        client = TestClient(api.server.app)
+        client = TestClient(api.server.app, raise_server_exceptions=False)
         # Two different "originating" IPs should each get their own bucket.
         # With a generous endpoint like /health we won't actually hit the
         # limit but we exercise the resolution path.
@@ -2739,7 +2746,7 @@ class TestApiHardening:
         import importlib, api.server
         importlib.reload(api.server)
         from fastapi.testclient import TestClient
-        client = TestClient(api.server.app)
+        client = TestClient(api.server.app, raise_server_exceptions=False)
         # 30 calls without hitting 429.
         for _ in range(30):
             r = client.post(
@@ -2760,7 +2767,7 @@ class TestApiHardening:
         import importlib, api.server
         importlib.reload(api.server)
         from fastapi.testclient import TestClient
-        client = TestClient(api.server.app)
+        client = TestClient(api.server.app, raise_server_exceptions=False)
         # Without header: 401
         resp = client.post(
             "/audit",

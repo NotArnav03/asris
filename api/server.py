@@ -306,17 +306,53 @@ if FRONTEND_DIR.exists():
 _embedding_manager = None
 _explainer = None
 
+
+class _MLDepMissing(HTTPException):
+    """503 raised when an endpoint needs an ML dependency that isn't
+    installed in this deployment.  Distinct from generic 500 so
+    operators can tell "deps not configured" from "endpoint bug"."""
+
+    def __init__(self, dep: str, exc: Exception) -> None:
+        super().__init__(
+            status_code=503,
+            detail=(
+                f"This endpoint requires {dep!r}, which is not installed "
+                f"in the running environment.  Install the optional ML "
+                f"extras or use a deployment image that bundles them. "
+                f"Underlying error: {type(exc).__name__}: {exc}"
+            ),
+        )
+
+
 def get_embedding_manager():
+    """Lazy-load the SBERT embedding manager.
+
+    Returns 503 via _MLDepMissing when sentence-transformers / torch
+    aren't installed, so the rate-limit + auth tests can exercise the
+    middleware paths on machines without the heavy ML stack (e.g. CI
+    runners using the minimal dependency list).  Production
+    deployments that need /rank / /audit / /counterfactual install
+    the full requirements and never hit this branch.
+    """
     global _embedding_manager
     if _embedding_manager is None:
-        from embeddings.embedding_manager import EmbeddingManager
+        try:
+            from embeddings.embedding_manager import EmbeddingManager
+        except ImportError as e:
+            raise _MLDepMissing("sentence-transformers", e)
         _embedding_manager = EmbeddingManager()
     return _embedding_manager
 
+
 def get_explainer():
+    """Lazy-load the match explainer.  Same graceful-503 contract
+    as get_embedding_manager when its dependencies aren't installed."""
     global _explainer
     if _explainer is None:
-        from explainability.explainer import MatchExplainer
+        try:
+            from explainability.explainer import MatchExplainer
+        except ImportError as e:
+            raise _MLDepMissing("explainability deps", e)
         _explainer = MatchExplainer()
     return _explainer
 
