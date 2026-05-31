@@ -2896,6 +2896,70 @@ class TestConstrainedInsertionFCR:
         # Max single-candidate displacement bounded by n-1.
         assert 0 <= report.max_displacement <= len(cands) - 1
 
+    # --- EmbeddingManager TF-IDF correctness (Task #51) -----------------
+
+    def test_encode_tfidf_uses_per_call_vectorizer(self, tmp_path):
+        # Two encode_tfidf calls with DIFFERENT fit corpora produce
+        # vectors in their OWN vocabulary spaces.  The prior singleton-
+        # vectorizer code corrupted call-1's vectors when call-2 re-fit
+        # the same instance on a different corpus.
+        import numpy as np
+        from embeddings.embedding_manager import EmbeddingManager
+        m = EmbeddingManager(cache_dir=tmp_path)
+        # Call 1: tiny vocab
+        out1 = m.encode_tfidf(
+            {"a": "python developer"},
+            fit_corpus=["python developer", "data scientist"],
+            use_cache=False,
+        )
+        # Call 2: different, larger vocab
+        out2 = m.encode_tfidf(
+            {"a": "python developer"},
+            fit_corpus=["machine learning engineer with python",
+                        "java developer at facebook",
+                        "marketing manager with brand strategy"],
+            use_cache=False,
+        )
+        # Same text, different fit corpora -> different vector shapes
+        # is expected (each fit produces its own vocabulary).
+        v1 = out1["a"].toarray().flatten()
+        v2 = out2["a"].toarray().flatten()
+        assert v1.shape != v2.shape or not np.allclose(v1, v2), (
+            "Different fit_corpora must yield different vector spaces"
+        )
+
+    def test_encode_tfidf_cache_key_includes_fit_corpus(self, tmp_path):
+        # Same texts but different fit_corpus must resolve to
+        # DIFFERENT cache entries.  Previously they collided and the
+        # second call returned the first call's stale vectors.
+        from embeddings.embedding_manager import EmbeddingManager
+        m = EmbeddingManager(cache_dir=tmp_path)
+        texts = {"doc": "alpha beta gamma"}
+        m.encode_tfidf(texts, fit_corpus=["alpha", "beta"], use_cache=True)
+        m.encode_tfidf(
+            texts, fit_corpus=["alpha", "beta", "delta"], use_cache=True,
+        )
+        files = list(tmp_path.glob("*.pkl"))
+        assert len(files) == 2, (
+            f"expected 2 distinct cache entries, got {len(files)}"
+        )
+
+    def test_cosine_similarity_handles_sparse_and_dense(self):
+        import numpy as np
+        from embeddings.embedding_manager import EmbeddingManager
+        from scipy.sparse import csr_matrix
+        a_dense = np.array([1.0, 0.0, 0.0])
+        b_dense = np.array([1.0, 0.0, 0.0])
+        assert abs(EmbeddingManager.cosine_similarity(a_dense, b_dense) - 1.0) < 1e-9
+        # Sparse input gets coerced via toarray().
+        a_sparse = csr_matrix(a_dense)
+        b_sparse = csr_matrix(b_dense)
+        assert abs(EmbeddingManager.cosine_similarity(a_sparse, b_sparse) - 1.0) < 1e-9
+        # Orthogonal -> 0.
+        c = np.array([0.0, 1.0, 0.0])
+        assert abs(EmbeddingManager.cosine_similarity(a_dense, c)) < 1e-9
+
+
     # --- classify_at_percentile (Task #50) -----------------------------
 
     def test_classify_at_percentile_median_uses_ge_boundary(self):

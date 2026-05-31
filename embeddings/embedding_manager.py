@@ -62,21 +62,53 @@ class EmbeddingManager:
 
     @property
     def tfidf_vectorizer(self):
+        """Singleton vectorizer for callers that EXPLICITLY want the
+        shared instance (e.g. introspection / debugging).
+
+        The encode_tfidf() entry point intentionally constructs a
+        FRESH vectorizer per call — see that method's docstring for
+        why the singleton pattern was unsafe for multi-corpus use.
+        """
         if self._tfidf_vectorizer is None:
-            from sklearn.feature_extraction.text import TfidfVectorizer
-            self._tfidf_vectorizer = TfidfVectorizer(
-                stop_words=TFIDF_STOP_WORDS,
-                max_features=TFIDF_MAX_FEATURES,
-            )
+            self._tfidf_vectorizer = self._build_tfidf_vectorizer()
         return self._tfidf_vectorizer
+
+    @staticmethod
+    def _build_tfidf_vectorizer():
+        """Construct a fresh TfidfVectorizer with the project defaults."""
+        from sklearn.feature_extraction.text import TfidfVectorizer
+        return TfidfVectorizer(
+            stop_words=TFIDF_STOP_WORDS,
+            max_features=TFIDF_MAX_FEATURES,
+        )
 
     # ─── Cache Utilities ─────────────────────────────────────────
 
-    def _cache_key(self, texts: dict[str, str], prefix: str) -> str:
-        """Generate a deterministic cache key from input texts."""
-        content_hash = hashlib.md5(
-            json.dumps(sorted(texts.items()), ensure_ascii=False).encode()
-        ).hexdigest()[:12]
+    def _cache_key(
+        self,
+        texts: dict,
+        prefix: str,
+        extras: Optional[list] = None,
+    ) -> str:
+        """Generate a deterministic cache key from input texts.
+
+        SHA-256 is used (not MD5) so the key is collision-resistant
+        for security auditors looking at the cache directory.  Only
+        the first 16 hex chars are retained — 64 bits of entropy
+        is comfortable above the birthday-collision floor for any
+        plausible cache size we'd ever hit.
+
+        ``extras`` is an optional list of additional strings that
+        also affect the encoded output (e.g. the fit_corpus hash for
+        TF-IDF).  Without this, two calls with the same ``texts``
+        but different fit corpora would hash to the same key, and
+        the second call would silently return the stale cached
+        vectors from the first.
+        """
+        payload = json.dumps(sorted(texts.items()), ensure_ascii=False)
+        if extras:
+            payload += "|" + "|".join(extras)
+        content_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
         model_tag = self.model_name.replace("/", "_").replace("-", "_")
         return f"{prefix}_{model_tag}_{content_hash}"
 
@@ -144,13 +176,27 @@ class EmbeddingManager:
 
     def encode_tfidf(
         self,
-        texts: dict[str, str],
-        fit_corpus: Optional[list[str]] = None,
+        texts: dict,
+        fit_corpus: Optional[list] = None,
         use_cache: bool = True,
         cache_prefix: str = "tfidf",
-    ) -> dict[str, np.ndarray]:
-        """
-        Generate TF-IDF vectors for a dict of {id: text}.
+    ) -> dict:
+        """Generate TF-IDF vectors for a dict of {id: text}.
+
+        Per-call vectorizer construction:
+          A FRESH ``TfidfVectorizer`` is built every call, so two
+          calls with different ``fit_corpus`` arguments produce
+          vectors in their OWN vocabulary space.  The prior singleton-
+          vectorizer pattern silently corrupted call-1's vectors when
+          call 2 re-fit the same instance on a different corpus —
+          dimensions changed, vocab changed, and the cached call-1
+          vectors became incompatible with anything produced later.
+
+        Cache-key safety:
+          The cache key folds in a SHA-256 of the fit_corpus content
+          (or "self" when fit_corpus is None) so two calls with the
+          same ``texts`` but DIFFERENT fit corpora resolve to
+          different cache entries.
 
         Args:
             texts: Dict of {id: text} to encode
@@ -159,9 +205,15 @@ class EmbeddingManager:
             use_cache: Whether to use disk cache
 
         Returns:
-            dict mapping id -> sparse TF-IDF vector
+            dict mapping id -> sparse TF-IDF row
         """
-        cache_key = self._cache_key(texts, cache_prefix)
+        corpus = list(fit_corpus) if fit_corpus is not None else list(texts.values())
+        fit_corpus_hash = hashlib.sha256(
+            json.dumps(corpus, ensure_ascii=False).encode("utf-8")
+        ).hexdigest()[:16]
+        cache_key = self._cache_key(
+            texts, cache_prefix, extras=[fit_corpus_hash],
+        )
 
         if use_cache:
             cached = self._load_cache(cache_key)
@@ -170,12 +222,14 @@ class EmbeddingManager:
 
         logger.info(f"Encoding {len(texts)} texts with TF-IDF...")
 
-        corpus = fit_corpus if fit_corpus else list(texts.values())
-        self.tfidf_vectorizer.fit(corpus)
+        # Build a fresh vectorizer for THIS call so the fit doesn't
+        # mutate any singleton shared with another caller.
+        vectorizer = self._build_tfidf_vectorizer()
+        vectorizer.fit(corpus)
 
         ids = list(texts.keys())
         text_list = [str(texts[k]) for k in ids]
-        matrix = self.tfidf_vectorizer.transform(text_list)
+        matrix = vectorizer.transform(text_list)
 
         result = {ids[i]: matrix[i] for i in range(len(ids))}
 
