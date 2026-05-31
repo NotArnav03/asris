@@ -60,6 +60,35 @@ class TestTextNormalizer:
         assert "Python" in result
         assert "Developer" in result
 
+    def test_normalize_unicode_ascii_only_preserves_legacy_behavior(self):
+        # Default ascii_only=True keeps the prior NFKD+ASCII-strip
+        # behavior — accented Latin loses diacritics, non-ASCII vanishes.
+        from preprocessing.text_normalizer import normalize_unicode
+        assert "cafe" in normalize_unicode("café")
+        # Arabic characters are stripped under the legacy mode.
+        assert normalize_unicode("Mr محمد") == "Mr "
+
+    def test_normalize_unicode_preserves_non_latin_with_ascii_only_false(self):
+        # Multi-script audits set ascii_only=False; Arabic, Chinese,
+        # Hebrew, Devanagari characters must survive.
+        from preprocessing.text_normalizer import normalize_unicode
+        out = normalize_unicode("Mr محمد", ascii_only=False)
+        assert "محمد" in out
+        # NFKC still applied — fullwidth Latin collapses to ASCII.
+        out2 = normalize_unicode("Ｍｒ Smith", ascii_only=False)
+        assert "Mr Smith" in out2
+
+    def test_normalize_text_passes_ascii_only_through(self):
+        from preprocessing.text_normalizer import normalize_text
+        out = normalize_text(
+            "Mohammed محمد - Senior Engineer",
+            remove_personal_info=False,
+            ascii_only=False,
+        )
+        assert "محمد" in out
+        assert "Mohammed" in out
+
+
     def test_lowercase(self):
         from preprocessing.text_normalizer import normalize_text
         text = "Senior Developer"

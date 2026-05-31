@@ -7,13 +7,18 @@ import re
 import unicodedata
 from typing import Optional
 
-# Try to load spaCy for lemmatization; fall back to basic if unavailable
+# Try to load spaCy for lemmatization; fall back to basic if unavailable.
+# Broad except catches the pydantic.v1.errors.ConfigError that surfaces
+# under Python 3.13+ where pydantic.v1 is incompatible with the spaCy
+# TokenPatternString model — we don't want lemmatisation availability
+# to block import of every other normalisation utility.
 try:
     import spacy
     _nlp = spacy.load("en_core_web_sm", disable=["parser", "ner"])
     _HAS_SPACY = True
-except (ImportError, OSError):
+except Exception:
     _HAS_SPACY = False
+    _nlp = None
 
 import sys
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent))
@@ -34,11 +39,36 @@ _SPECIAL_CHARS_RE = re.compile(r"[^\w\s\.\,\;\:\-\+\#\(\)\/\&]")
 _BULLET_RE = re.compile(r"^[\s]*[•●○▪▸►◆★✦✓✔→\-\*]\s*", re.MULTILINE)
 
 
-def normalize_unicode(text: str) -> str:
-    """Normalize unicode characters to ASCII equivalents."""
-    text = unicodedata.normalize("NFKD", text)
-    text = text.encode("ascii", "ignore").decode("ascii")
-    return text
+def normalize_unicode(text: str, ascii_only: bool = True) -> str:
+    """Normalize unicode characters.
+
+    Args:
+        text: Input string.
+        ascii_only: When True (default, legacy), apply NFKD then
+            encode/decode through ASCII with errors='ignore' — this
+            STRIPS every non-ASCII character.  Convenient for
+            pure-English pipelines but DESTROYS information on
+            non-Latin-script resumes (Arabic, Chinese, Devanagari,
+            Hebrew, Korean...): such resumes become near-empty.
+            For multi-script fairness audits set ascii_only=False
+            to keep the original characters (still NFKC-normalised
+            so visually-equivalent forms collapse).
+
+    The default is left at True so the existing pipeline behaves
+    identically; callers that audit across scripts should pass
+    ascii_only=False.
+    """
+    if ascii_only:
+        # Legacy behaviour — NFKD decomposes accents, ASCII-encode
+        # strips them.  Lossy for non-Latin scripts.
+        text = unicodedata.normalize("NFKD", text)
+        text = text.encode("ascii", "ignore").decode("ascii")
+        return text
+    # Multi-script-safe: canonicalise to NFKC (the form that collapses
+    # visually-equivalent codepoints like fullwidth Latin or
+    # mathematical alphanumerics, without throwing away anything that
+    # has no ASCII equivalent).
+    return unicodedata.normalize("NFKC", text)
 
 
 def remove_pii(text: str) -> str:
@@ -82,15 +112,21 @@ def normalize_text(
     remove_personal_info: bool = True,
     do_lemmatize: bool = False,
     lowercase: bool = False,
+    ascii_only: bool = True,
 ) -> str:
-    """
-    Full text normalization pipeline.
+    """Full text normalization pipeline.
 
     Args:
         text: Raw input text
         remove_personal_info: Strip emails, phones, URLs
-        do_lemmatize: Apply lemmatization (requires spaCy)
+        do_lemmatize: Apply lemmatization (requires spaCy).  When
+            spaCy isn't installed this emits a warning and returns the
+            text unchanged — the prior silent fallback hid a real
+            configuration error.
         lowercase: Convert to lowercase
+        ascii_only: Forwarded to ``normalize_unicode``.  Set to False
+            for multi-script fairness audits to preserve non-Latin
+            characters.
 
     Returns:
         Cleaned, normalized text
@@ -98,16 +134,31 @@ def normalize_text(
     if not text or not isinstance(text, str):
         return ""
 
-    text = normalize_unicode(text)
+    # Order matters: bullet normalisation MUST run before
+    # normalize_unicode() because the ASCII-strip path destroys the
+    # non-ASCII bullet characters (•, ▸, ►, ...).  If we strip first,
+    # there's nothing for normalize_bullets to convert.
+    text = normalize_bullets(text)
+
+    text = normalize_unicode(text, ascii_only=ascii_only)
 
     if remove_personal_info:
         text = remove_pii(text)
 
-    text = normalize_bullets(text)
+    # When ascii_only=False we KEEP non-ASCII characters; the
+    # special-chars filter only strips ASCII punctuation that isn't
+    # in the allowlist.  \w in the regex is already Unicode-aware,
+    # so foreign letters survive automatically.
     text = _SPECIAL_CHARS_RE.sub(" ", text)
     text = clean_whitespace(text)
 
     if do_lemmatize:
+        if not _HAS_SPACY:
+            logger.warning(
+                "do_lemmatize=True requested but spaCy is not "
+                "installed; returning un-lemmatised text.  Install "
+                "spacy + the en_core_web_sm model to enable."
+            )
         text = lemmatize(text)
 
     if lowercase:
