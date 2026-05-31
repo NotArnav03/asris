@@ -2839,6 +2839,224 @@ class TestApiHardening:
 
 
 # ═══════════════════════════════════════════════════════════════
+# Pure helper unit tests (Task #58)
+# ═══════════════════════════════════════════════════════════════
+
+class TestPureHelpers:
+    """Direct unit tests for the side-effect-free helper functions
+    underpinning the audit.  These are functions that take inputs and
+    return outputs with no I/O, no globals, no model loads — they
+    deserve targeted tests rather than only being exercised through
+    integration paths.
+
+    Closes the "all tests are integration tests" gap surfaced in the
+    self-audit after task #3.
+    """
+
+    # --- _wilson_interval --------------------------------------------
+
+    def test_wilson_interval_at_50_50_centred_at_half(self):
+        from fairness.bias_detector import BiasDetector
+        lo, hi = BiasDetector._wilson_interval(50, 100)
+        assert 0.0 <= lo < 0.5 < hi <= 1.0
+        # Symmetric around 0.5 within numerical tolerance.
+        assert abs((lo + hi) / 2 - 0.5) < 0.01
+
+    def test_wilson_interval_at_extremes_stays_in_unit(self):
+        from fairness.bias_detector import BiasDetector
+        # 0/n -> CI lower bound 0, upper > 0 (not the strict-zero
+        # Wald formula gives, which would have width zero).
+        lo, hi = BiasDetector._wilson_interval(0, 100)
+        assert lo == 0.0
+        assert 0.0 < hi < 0.1
+        # n/n -> mirror image.  Floating-point rounding can leave
+        # the upper bound just shy of exactly 1.0; assert it's at
+        # least within ulp-tolerance, never above 1.0.
+        lo, hi = BiasDetector._wilson_interval(100, 100)
+        assert hi >= 0.9999
+        assert hi <= 1.0
+        assert 0.9 < lo < 1.0
+
+    def test_wilson_interval_zero_total_safe(self):
+        from fairness.bias_detector import BiasDetector
+        assert BiasDetector._wilson_interval(0, 0) == (0.0, 0.0)
+        assert BiasDetector._wilson_interval(5, 0) == (0.0, 0.0)
+
+    def test_wilson_interval_shrinks_with_sample_size(self):
+        from fairness.bias_detector import BiasDetector
+        # Same point estimate, larger n -> tighter CI.
+        lo_small, hi_small = BiasDetector._wilson_interval(5, 10)
+        lo_big,   hi_big   = BiasDetector._wilson_interval(500, 1000)
+        assert (hi_big - lo_big) < (hi_small - lo_small)
+
+    # --- _simhash + _hamming_distance --------------------------------
+
+    def test_simhash_identical_text_collides(self):
+        from fairness.bias_detector import _simhash, _hamming_distance
+        a = _simhash("python developer with five years experience")
+        b = _simhash("python developer with five years experience")
+        assert _hamming_distance(a, b) == 0
+
+    def test_simhash_near_text_has_low_hamming(self):
+        from fairness.bias_detector import _simhash, _hamming_distance
+        a = _simhash(
+            "Python developer with five years of experience building "
+            "machine learning systems at TechCo."
+        )
+        b = _simhash(
+            "Python developer with five years of experience building "
+            "machine learning systems at GlobalCo."   # one word changed
+        )
+        assert _hamming_distance(a, b) <= 8
+
+    def test_simhash_unrelated_text_has_high_hamming(self):
+        from fairness.bias_detector import _simhash, _hamming_distance
+        a = _simhash(
+            "Python developer with experience in machine learning"
+        )
+        b = _simhash(
+            "Marketing manager with brand strategy and social media"
+        )
+        # Unrelated documents should differ in many bits — well above
+        # the near-dup threshold of 3.
+        assert _hamming_distance(a, b) > 10
+
+    def test_simhash_empty_text(self):
+        from fairness.bias_detector import _simhash
+        # Empty text produces a deterministic zero fingerprint;
+        # downstream dedup correctly groups all empties together.
+        assert _simhash("") == 0
+        assert _simhash("   \n  ") == 0
+
+    # --- _detect_language --------------------------------------------
+
+    def test_detect_language_english_default(self):
+        from fairness.bias_detector import _detect_language
+        # No stopwords from any language -> default English.
+        assert _detect_language("") == "en"
+        assert _detect_language("Just a name") == "en"
+
+    def test_detect_language_spanish(self):
+        from fairness.bias_detector import _detect_language
+        assert _detect_language(
+            "El gerente de marketing con experiencia en publicidad y "
+            "ventas para las empresas internacionales."
+        ) == "es"
+
+    def test_detect_language_french(self):
+        from fairness.bias_detector import _detect_language
+        assert _detect_language(
+            "Le développeur logiciel avec une expérience de cinq ans "
+            "dans la création des applications pour les clients."
+        ) == "fr"
+
+    def test_detect_language_below_threshold_falls_back_to_en(self):
+        from fairness.bias_detector import _detect_language
+        # Two French stopwords (below 3-stopword threshold)
+        # falls back to English default.
+        assert _detect_language("le la") == "en"
+
+    # --- _extract_header_window --------------------------------------
+
+    def test_extract_header_window_terminates_at_section_header(self):
+        from fairness.bias_detector import _extract_header_window
+        text = (
+            "Jane Doe\n"
+            "Data Scientist\n\n"
+            "EXPERIENCE\n"
+            "Senior Engineer at TechCo\n"
+        )
+        window = _extract_header_window(text)
+        assert "Jane Doe" in window
+        assert "Data Scientist" in window
+        assert "EXPERIENCE" not in window
+        assert "Senior Engineer" not in window
+
+    def test_extract_header_window_terminates_at_long_paragraph(self):
+        from fairness.bias_detector import _extract_header_window
+        long_line = "a " * 250  # > 200 chars
+        text = f"Mr. Smith\n{long_line}\nMore text"
+        window = _extract_header_window(text)
+        assert "Mr. Smith" in window
+        assert long_line not in window
+
+    def test_extract_header_window_respects_max_lines(self):
+        from fairness.bias_detector import _extract_header_window
+        text = "\n".join([f"Line{i}" for i in range(50)])
+        window = _extract_header_window(text, max_lines=5)
+        kept_lines = [l for l in window.split("\n") if l.strip()]
+        assert len(kept_lines) <= 5
+
+    # --- _expected_calibration_error ---------------------------------
+
+    def test_ece_perfect_calibration_returns_zero(self):
+        import numpy as np
+        from fairness.names.train_classifier import _expected_calibration_error
+        # Predictions all at 0.5 with 50% positive rate -> perfect.
+        y_true = np.array([1, 1, 0, 0] * 100)
+        y_prob = np.array([0.5] * 400)
+        ece = _expected_calibration_error(y_true, y_prob)
+        assert ece < 0.05
+
+    def test_ece_inverted_predictions_is_high(self):
+        import numpy as np
+        from fairness.names.train_classifier import _expected_calibration_error
+        # Predictions strongly disagree with truth -> high ECE.
+        y_true = np.array([1, 1, 1, 1] * 25)
+        y_prob = np.array([0.1] * 100)   # always predict male, all are female
+        ece = _expected_calibration_error(y_true, y_prob)
+        assert ece > 0.5
+
+    # --- NameGenderResult derived properties -------------------------
+
+    def test_name_gender_result_confidence_property(self):
+        from fairness.names.classifier import NameGenderResult
+        # p=0.5 -> confidence 0 (perfect unisex)
+        r = NameGenderResult(name="x", p_female=0.5, source="empty")
+        assert r.confidence == 0.0
+        # p=1.0 -> confidence 1 (fully one side)
+        r = NameGenderResult(name="x", p_female=1.0, source="lookup")
+        assert r.confidence == 1.0
+        # p=0.85 -> confidence 0.70
+        r = NameGenderResult(name="x", p_female=0.85, source="lookup")
+        assert abs(r.confidence - 0.70) < 1e-9
+
+    def test_name_gender_result_hard_label_thresholds(self):
+        from fairness.names.classifier import NameGenderResult
+        # 0.95 >= 0.85 default -> female
+        assert NameGenderResult(name="x", p_female=0.95, source="lookup").hard_label() == "female"
+        # 0.05 <= 0.15 default -> male
+        assert NameGenderResult(name="x", p_female=0.05, source="lookup").hard_label() == "male"
+        # 0.5 in unknown band
+        assert NameGenderResult(name="x", p_female=0.5,  source="lookup").hard_label() == "unknown"
+
+    def test_name_gender_result_is_surname_only_logic(self):
+        from fairness.names.classifier import (
+            NameGenderResult, SURNAME_OVERRIDE_WEIGHT,
+        )
+        # is_surname=False -> always False
+        r = NameGenderResult(name="x", p_female=0.5, source="model",
+                             is_surname=False)
+        assert r.is_surname_only is False
+        # is_surname=True + lookup w >= override -> NOT surname-only
+        r = NameGenderResult(
+            name="x", p_female=0.0, source="lookup",
+            weight=SURNAME_OVERRIDE_WEIGHT + 0.1, is_surname=True,
+        )
+        assert r.is_surname_only is False
+        # is_surname=True + lookup w < override -> surname-only
+        r = NameGenderResult(
+            name="x", p_female=0.0, source="lookup",
+            weight=SURNAME_OVERRIDE_WEIGHT - 0.1, is_surname=True,
+        )
+        assert r.is_surname_only is True
+        # is_surname=True + source != lookup -> always surname-only
+        r = NameGenderResult(name="x", p_female=0.0, source="model",
+                             is_surname=True)
+        assert r.is_surname_only is True
+
+
+# ═══════════════════════════════════════════════════════════════
 # Constrained-Insertion FCR (Task #9)
 # ═══════════════════════════════════════════════════════════════
 
