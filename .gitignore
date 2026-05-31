@@ -19,6 +19,11 @@ env/
 # re-include a path whose parent directory has been excluded, so we use
 # `data/*` (children) rather than `data/` (the directory).
 data/*
+
+# Reproducibility manifest is regenerated on every `python reproduce.py`
+# run; the timestamp fields churn constantly.  Hashes inside are
+# inspectable on demand via `python reproduce.py --check`.
+reproducibility_manifest.json
 *.csv
 *.pkl
 *.npy
