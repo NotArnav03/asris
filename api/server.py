@@ -428,7 +428,10 @@ async def upload_pdf(file: UploadFile = File(...)):
     Upload a PDF resume and extract its text.
     Returns the extracted text for use in ranking/explaining.
     """
-    if not file.filename.lower().endswith(".pdf"):
+    # FastAPI types UploadFile.filename as Optional[str].  Reject the
+    # request when it's missing entirely (some clients omit the
+    # Content-Disposition filename) before doing any string operations.
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are accepted")
 
     import pdfplumber
@@ -479,7 +482,7 @@ async def rank_pdf_resumes(
 
     resume_texts = {}
     for file in files:
-        if not file.filename.lower().endswith(".pdf"):
+        if not file.filename or not file.filename.lower().endswith(".pdf"):
             continue
         try:
             contents = await file.read()

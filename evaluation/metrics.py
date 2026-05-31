@@ -195,9 +195,9 @@ class RankingEvaluator:
     having a list of candidate scores and relevance labels.
     """
 
-    def __init__(self, k_values: Optional[list[int]] = None):
+    def __init__(self, k_values: Optional[list] = None):
         self.k_values = k_values or EVAL_TOP_K_VALUES
-        self.query_results = {}
+        self.query_results: dict = {}
 
     def add_query(
         self,
@@ -259,8 +259,11 @@ class RankingEvaluator:
             for metric, value in query_metrics.items():
                 aggregated[metric].append(value)
 
-        # Compute means
-        mean_metrics = {
+        # Compute means.  Annotated as dict[str, Any] because the
+        # ROC-AUC keys downstream may be None when AUC is undefined
+        # (only one class present) — mypy otherwise infers
+        # dict[str, float] and refuses the None assignment.
+        mean_metrics: dict = {
             metric: round(float(np.mean(values)), 4)
             for metric, values in aggregated.items()
         }
@@ -286,7 +289,7 @@ class RankingEvaluator:
 
         flat_auc = compute_roc_auc(all_y_true, all_y_scores)
         mean_metrics["ROC-AUC_flat"] = (
-            None if flat_auc is None else round(flat_auc, 4)
+            None if flat_auc is None else round(float(flat_auc), 4)
         )
         mean_metrics["ROC-AUC_mean_per_query"] = (
             round(float(np.mean(per_query_aucs)), 4) if per_query_aucs else None
@@ -366,7 +369,10 @@ def quick_evaluate(
 
     results["MRR"] = round(mean_reciprocal_rank(y_true, y_scores), 4)
     results["AP"] = round(average_precision(y_true, y_scores), 4)
-    results["ROC-AUC"] = round(compute_roc_auc(y_true, y_scores), 4)
+    # compute_roc_auc returns Optional[float] (None on undefined input).
+    # Preserve None in the report rather than forcing it to a numeric.
+    _auc = compute_roc_auc(y_true, y_scores)
+    results["ROC-AUC"] = None if _auc is None else round(_auc, 4)
 
     return results
 

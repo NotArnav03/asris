@@ -1,0 +1,119 @@
+# FAIMR project configuration
+# - Pytest + pytest-cov defaults
+# - Mypy config (lenient by design, ratcheting up over time)
+# - Ruff lint config (off by default, available for future use)
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "faimr"
+version = "1.1.0"
+description = "Fairness-Aware Interpretable Multi-Signal Ranking"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "Arnav Gupta", email = "noreply@example.invalid" },
+]
+
+# ─── Pytest ─────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+]
+testpaths = ["tests"]
+filterwarnings = [
+    # spaCy 3.x ships pydantic v1 shims that warn on Python 3.13+ —
+    # we can't fix upstream, and silencing keeps the test log readable.
+    "ignore::DeprecationWarning:fastapi.*",
+    "ignore::UserWarning:confection.*",
+]
+
+# ─── Mypy ───────────────────────────────────────────────────────────
+# Scoped to the modules that have had a deliberate type-hint audit.
+# Other modules use Python's gradual-typing escape hatch (untyped code
+# is checked at a much lower strictness).  As more modules get
+# annotated, add them to `files =` and tighten per-module configs below.
+[tool.mypy]
+python_version = "3.12"
+# Several modules use `sys.path.insert(0, ...)` to import sibling
+# packages directly; explicit_package_bases lets mypy treat the
+# top-level dirs as separate package roots without forcing every
+# import to be relative.
+explicit_package_bases = true
+files = [
+    "fairness/bias_detector.py",
+    "fairness/names/classifier.py",
+    "fairness/names/cultural_classifier.py",
+    "fairness/names/seed_lists.py",
+    "ranking/fairness_ranker.py",
+    "evaluation/metrics.py",
+    "evaluation/counterfactual_robustness.py",
+    "api/server.py",
+]
+# Lenient defaults: respects existing partial annotations without
+# demanding everything be fully typed.  The audit pipeline uses dict
+# values of mixed types (gather everything into one report dict) and
+# strict mode would require type-aliased TypedDicts everywhere.
+ignore_missing_imports = true
+warn_unused_configs = true
+warn_redundant_casts = true
+# warn_unreachable is OFF — too many false positives in audit
+# code that has multiple short-circuit branches with type narrowing
+# that mypy can't always follow.  Each true unreachable was triaged
+# manually during the type-check pass.
+warn_unreachable = false
+# Most violations from the type-check pass are gradual-typing noise
+# (dict annotations on internal accumulators) rather than runtime
+# bugs.  These are downgraded to warnings rather than errors.  Bugs
+# that are GENUINE (e.g. Optional default values, mismatched return
+# types from a refactor) are individually fixed in the source.
+no_implicit_optional = false
+check_untyped_defs = false
+# DON'T enable these yet — they would surface ~200 errors that aren't
+# correctness issues, just gradual-typing noise.  Add them per-module
+# as each module's types get tightened:
+#   disallow_untyped_defs = true
+#   disallow_any_generics = true
+#   strict_equality = true
+
+[[tool.mypy.overrides]]
+module = "throttled.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "sentence_transformers.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "sklearn.*"
+ignore_missing_imports = true
+
+# ─── Ruff (lint; off by default; available for future use) ─────────
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [
+    "data/",
+    "experiments/",
+    "frontend/",
+    "notebooks/",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors
+    "F",     # pyflakes
+    "W",     # pycodestyle warnings
+    "B",     # bugbear (likely-bugs)
+    "I",     # isort (import order)
+]
+ignore = [
+    "E501",  # line too long — many of our docstrings exceed 100 chars
+    "E731",  # lambda assignment (used in test fixtures)
+]
