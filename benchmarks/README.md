@@ -51,10 +51,13 @@ That's not honest for a methodology paper.  The claim is:
    account of where the per-culture calibration mildly underperforms a
    raw TF-IDF + LR baseline on OOD English names:
    `benchmarks/ssa_name_gender/README.md`.
-3. **FA\*IR**: FAIMR's constrained-insertion FCR achieves equal or
-   better NDCG-at-equal-AIR than FA*IR, with the additional
-   guarantees of within-group order preservation and a written
-   termination proof.
+3. **FA\*IR**: FAIMR's constrained-insertion FCR matches or beats
+   FA\*IR's NDCG at min-prefix-AIR ≥ 0.60 in **7 of 8 conditions**,
+   and reaches the legal 4/5-Rule standard (AIR ≥ 0.80) in
+   **all 8 conditions** where FA\*IR only reaches it in 2 of 8.
+   Plus written termination proof, within-group order invariant,
+   and a Pareto-frontier trade-off curve (FA\*IR is single-point).
+   Full numbers: `benchmarks/fair_ranking/README.md`.
 
 The novel contributions FAIMR has that aren't measured on any
 benchmark above (Unicode-confusable defence, RTL honorifics, drift
