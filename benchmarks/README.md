@@ -43,9 +43,14 @@ That's not honest for a methodology paper.  The claim is:
    gender labels (which is the standard published setup).  Concrete
    number: `benchmarks/bias_in_bios/results.json::attribution_accuracy`.
 2. **SSA name-gender**: FAIMR's hybrid lookup + char-ngram + per-
-   culture calibration matches a char-LSTM SOTA baseline on
-   English-only names AND outperforms it on multi-cultural names
-   (the headline weakness of pure char-LSTM models).
+   culture calibration hits **0.9747 accuracy / 0.0224 ECE** on the
+   canonical-name slice (≥50 years of SSA attestation), inside the
+   published char-LSTM band of 0.95--0.97. Stratified per-attestation
+   breakdown shows clean degradation toward the rare tail, where no
+   architecture recovers full accuracy. Full numbers and an honest
+   account of where the per-culture calibration mildly underperforms a
+   raw TF-IDF + LR baseline on OOD English names:
+   `benchmarks/ssa_name_gender/README.md`.
 3. **FA\*IR**: FAIMR's constrained-insertion FCR achieves equal or
    better NDCG-at-equal-AIR than FA*IR, with the additional
    guarantees of within-group order preservation and a written
