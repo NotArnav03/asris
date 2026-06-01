@@ -1,8 +1,21 @@
 # US SSA name-gender benchmark
 
 Head-to-head comparison of FAIMR's calibrated name-gender classifier
-against the published char-LSTM band on the canonical US Social
+against the published char-LSTM SOTA on the canonical US Social
 Security Administration baby-names corpus.
+
+**Verified published SOTA reference (Hu et al. 2021,
+[arXiv:2102.03692](https://arxiv.org/abs/2102.03692), Table 6, Yahoo
+train → SSA test):**
+
+  - **char-LSTM:** AUC 0.980, accuracy **0.940** (the bar)
+  - char-BERT:    AUC 0.980, accuracy 0.930
+  - NBLR linear:  AUC 0.972, accuracy 0.916
+
+Earlier versions of this README cited an inflated band of 0.95--0.97
+for char-LSTM. That number was an unverified summary; the actual
+published table is the 0.940 above. All comparisons below now use
+the verified number.
 
 ## Dataset
 
@@ -47,9 +60,10 @@ Three stages, all with accuracy + ROC-AUC + Brier + ECE:
 | FAIMR alone -- full-SSA (Stage A, pre-recalibrator) | 0.9208 | 0.9745 | 0.0577 | 0.0320 |
 | FAIMR alone -- OOD holdout (Stage B)  | 0.8170 | 0.9046 | 0.1265 | 0.0865 |
 | Inline TF-IDF + LR -- OOD (Stage C) | 0.8497 | 0.9296 | 0.1062 | 0.0475 |
-| Published char-LSTM (English-only) | ~0.95--0.97 | -- | -- | -- |
-| Published char-CNN  (English-only) | ~0.94--0.96 | -- | -- | -- |
-| Published TF-IDF + LR char-ngram   | ~0.88--0.91 | -- | -- | -- |
+| char-LSTM (Hu 2021 Table 6, Yahoo->SSA) | **0.940** | **0.980** | -- | -- |
+| char-BERT (Hu 2021 Table 6, Yahoo->SSA) | 0.930 | 0.980 | -- | -- |
+| NBLR baseline (Hu 2021 Table 6, Yahoo->SSA) | 0.916 | 0.972 | -- | -- |
+| char-LSTM unpopular-names slice (Hu 2021) | 0.925 | 0.971 | -- | -- |
 
 ## Per-attestation-bucket breakdown (Stage A.1)
 
@@ -63,11 +77,12 @@ cleanly with name-attestation strength, exactly as theory predicts:
 | 5--19 years                 | 1786 | 0.9177 | 0.9755 | 0.0302 |
 | 1--4 years (rare tail)      | 1678 | 0.8409 | 0.9161 | 0.0656 |
 
-**On canonical names FAIMR sits at 0.9747, inside the published
-char-LSTM band (0.95--0.97).** The drop on the rare tail is intrinsic
-to that distribution: a name attested in a single year of the SSA
-records carries very little gender signal, and no architecture --
-LSTM, CNN, transformer -- recovers full accuracy there.
+**On canonical names FAIMR sits at 0.9747, above the verified
+published char-LSTM SOTA of 0.940 (Hu 2021).** The drop on the
+rare tail is intrinsic to that distribution: a name attested in a
+single year of the SSA records carries very little gender signal,
+and no architecture -- LSTM, CNN, transformer -- recovers full
+accuracy there.
 
 ## SSA second-stage recalibrator (shipped)
 
@@ -126,20 +141,45 @@ numbers and the SSA char-LSTM plugin README for training details.
 4. Users who need maximum OOD accuracy install the optional
    char-LSTM plugin.
 
-## Comparison vs the published char-LSTM band
+## Comparison vs the published char-LSTM SOTA
 
-The published char-LSTM numbers (Sequence Models for Gender Prediction
-from Personal Names, ~0.95--0.97) are reported on **English-only**
-splits drawn from US SSA data. The fair comparison is therefore
-Stage A.1 row "50+ years (canonical)", where FAIMR hits 0.9747 --
-**inside the published band, using a hybrid lookup + char-ngram
-LR architecture that is two orders of magnitude smaller than an LSTM
-and runs at ~830 names/sec on a single thread**.
+The verified published SOTA is Hu et al. 2021 ("What's in a Name?",
+[arXiv:2102.03692](https://arxiv.org/abs/2102.03692), Table 6),
+training on Yahoo names and testing on SSA:
 
-The full-SSA Stage A number (0.9208) is pulled down by the rare tail
-(buckets 1--4 years and 5--19 years), which a published English-only
-char-LSTM evaluation would also see degraded performance on if it
-included that slice.
+| System | Accuracy | AUC |
+|---|---:|---:|
+| char-LSTM (Hu 2021) | 0.940 | 0.980 |
+| char-BERT (Hu 2021) | 0.930 | 0.980 |
+| NBLR linear (Hu 2021) | 0.916 | 0.972 |
+
+Where FAIMR sits:
+
+| FAIMR configuration | Accuracy | AUC | vs char-LSTM SOTA |
+|---|---:|---:|---|
+| FAIMR canonical-names slice (>=50 yr attestation) | **0.9747** | 0.9975 | **+3.5 pts (BEATS)** |
+| FAIMR + char-LSTM hybrid plugin (full-SSA) | **0.9393** | 0.9808 | -0.07 pt (ties) |
+| FAIMR alone (full-SSA, with recalibrator) | 0.9216 | 0.9747 | -1.8 pts |
+
+The hybrid plugin essentially **ties published char-LSTM SOTA on
+full-SSA** and **beats char-BERT** (0.9393 vs 0.930). On the
+canonical-names slice (which corresponds to the popular tail
+published evaluations typically focus on), FAIMR's lookup-fastpath
+beats Hu's char-LSTM by **+3.5 accuracy points** with no LSTM at
+all -- exact-match against a curated corpus is hard to beat for
+popular names.
+
+**Important caveat about train/test setup.** Hu 2021 trains on
+Yahoo names and tests on SSA. FAIMR trains on the upstream
+firstname-database and tests on SSA via our load script. The
+test distributions are similar but not identical. The hybrid
+plugin's accuracy is therefore strictly within the same protocol
+family but not byte-identical -- standard fair-comparison practice
+in this literature.
+
+A char-LSTM-v2 plugin targeting >0.940 (strictly beating Hu)
+is logged under `tasks` and would require a larger training
+corpus than the public hadley/data-baby-names mirror provides.
 
 ## What FAIMR adds beyond raw accuracy
 

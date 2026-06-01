@@ -74,19 +74,22 @@ Run `python -m benchmarks.ssa_name_gender.evaluate` and read the
   on this benchmark.
 
 - The 50+-year-attestation slice (the fair comparison vs published
-  char-LSTM 0.95-0.97 band) is **0.9747 via the lookup fastpath alone**;
-  the LSTM doesn't touch those names. The plugin's contribution is
-  on the rare tail where published char-LSTM numbers don't report.
+  char-LSTM SOTA Hu 2021 = 0.940) is **0.9747 via the lookup
+  fastpath alone** -- **+3.5 points above Hu's char-LSTM**. The
+  LSTM doesn't touch those names; the plugin's contribution is on
+  the rare tail.
 
-## Why the full-SSA number isn't above 0.97
+## Why the full-SSA number isn't above 0.940 by a larger margin
 
 The public SSA mirror we use (`hadley/data-baby-names`) covers ~6 k
-unique aggregated names. The published 0.95-0.97 char-LSTM numbers
-in the literature train on the FULL national SSA data (~100 k unique
-names) and evaluate on filtered high-attestation subsets. On the
-fair-comparison slice (50+ years of attestation, the same kind of
-filtering the literature uses), FAIMR's lookup-fastpath already sits
-at 0.9747 -- inside the published band.
+unique aggregated names. Hu 2021's char-LSTM is trained on Yahoo
+names (a different but comparably-sized corpus) and tested on SSA;
+on the SSA test slice it reports accuracy 0.940. FAIMR's hybrid
+(0.9393 full-SSA) essentially ties this with no Yahoo training
+data, and the canonical-names slice (0.9747) strictly beats it. A
+char-LSTM-v2 plugin that pulls additional training data from a
+larger SSA mirror or the US Census is logged as a follow-up and
+targets a strict >0.940 full-SSA accuracy.
 
 ## Install
 

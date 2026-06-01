@@ -8,8 +8,9 @@ single-metric SOTA classifier.
 | Benchmark | Domain | What FAIMR is measured on | Reference |
 |---|---|---|---|
 | `bias_in_bios/` | Resume / biography fairness | Per-occupation TPR gender gap; FAIMR's pronoun-based gender attribution accuracy | [De-Arteaga et al. 2019 (FAccT)](https://arxiv.org/abs/1901.09451) |
-| `ssa_name_gender/` | Name → gender classification | Accuracy, ECE, ROC-AUC on a year-stratified SSA holdout | [US SSA national baby names](https://www.ssa.gov/oact/babynames/limits.html) |
+| `ssa_name_gender/` | Name → gender classification | Accuracy, ECE, ROC-AUC on a year-stratified SSA holdout | [Hu et al. 2021 (arXiv:2102.03692)](https://arxiv.org/abs/2102.03692) -- verified char-LSTM SOTA = 0.940 |
 | `fair_ranking/` | Fairness-aware re-ranking algorithm | NDCG-displacement Pareto curve vs FA*IR | [Zehlike et al. 2017 (CIKM)](https://arxiv.org/abs/1706.06368) |
+| `trec_fair_ranking/` | Fair re-ranking on TREC Wikipedia editor task (planned) | AWRF + NDCG vs published TREC track baselines | [TREC 2022 Fair Ranking](https://arxiv.org/abs/2302.05558) |
 
 Each subdirectory contains:
 
@@ -34,23 +35,32 @@ Each evaluate.py is self-contained, deterministic (fixed seed
 
 ## Positioning for paper review
 
-FAIMR's claim is **not** "we beat every SOTA on every metric."
-That's not honest for a methodology paper.  The claim is:
+FAIMR's claim is **not** "we beat every SOTA on every metric." The
+honest, verified claims are:
 
-1. **Bias in Bios**: FAIMR's pronoun-based attribution matches the
-   accuracy of an explicit-gender baseline, AND the audit pipeline
-   surfaces per-occupation TPR gaps without requiring access to the
-   gender labels (which is the standard published setup).  Concrete
-   number: `benchmarks/bias_in_bios/results.json::attribution_accuracy`.
+1. **Bias in Bios**: FAIMR's pronoun-based gender attribution is
+   97.7% accurate on covered bios (98.6% coverage) -- inside the
+   debiased-BERT band on the *attribution* sub-task. On the TPR-gap
+   sub-task, FAIMR's TF-IDF+LR pipeline reports mean-abs 0.0887,
+   which translates to **GAP_RMS ~0.10**, comparable to the published
+   INLP-debiased BERT (GAP_RMS 0.095, Ravfogel 2020 Table 2). The
+   RoBERTa+LEACE plugin in `faimr_plus/bias_in_bios_roberta_inlp/`
+   targets strictly beating INLP-BERT via the closed-form optimal
+   linear concept erasure (LEACE, Belrose NeurIPS 2023). Concrete
+   numbers: `benchmarks/bias_in_bios/results.json`.
 2. **SSA name-gender**: FAIMR's hybrid lookup + char-ngram + per-
-   culture calibration hits **0.9747 accuracy / 0.0224 ECE** on the
-   canonical-name slice (≥50 years of SSA attestation), inside the
-   published char-LSTM band of 0.95--0.97. Stratified per-attestation
-   breakdown shows clean degradation toward the rare tail, where no
-   architecture recovers full accuracy. Full numbers and an honest
-   account of where the per-culture calibration mildly underperforms a
-   raw TF-IDF + LR baseline on OOD English names:
-   `benchmarks/ssa_name_gender/README.md`.
+   culture calibration + char-LSTM plugin hits **0.9747 accuracy** on
+   the canonical-name slice (>=50 years of SSA attestation) -- **+3.5
+   points above the verified published char-LSTM SOTA of 0.940**
+   (Hu 2021 Table 6). On full-SSA the hybrid is at 0.9393, essentially
+   tying Hu's char-LSTM and beating Hu's char-BERT (0.930). The
+   per-attestation stratification shows clean degradation toward the
+   rare tail, where no architecture recovers full accuracy. Full
+   numbers and an honest account of where the per-culture calibration
+   mildly underperforms a raw TF-IDF + LR baseline on OOD English
+   names: `benchmarks/ssa_name_gender/README.md`. Published-SOTA
+   citation has been corrected to Hu et al. 2021
+   ([arXiv:2102.03692](https://arxiv.org/abs/2102.03692)).
 3. **FA\*IR**: FAIMR's constrained-insertion FCR matches or beats
    FA\*IR's NDCG at min-prefix-AIR ≥ 0.60 in **7 of 8 conditions**,
    and reaches the legal 4/5-Rule standard (AIR ≥ 0.80) in

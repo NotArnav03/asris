@@ -315,9 +315,9 @@ def main() -> int:
         print()
 
     print("## Headline numbers")
-    print(f"  Published char-LSTM (English-only):    ~0.95-0.97")
-    print(f"  Published char-CNN  (English-only):    ~0.94-0.96")
-    print(f"  Published TF-IDF + LR char-ngram band: ~0.88-0.91")
+    print(f"  Published char-LSTM SOTA  (Hu 2021, Table 6):  0.940")
+    print(f"  Published char-BERT       (Hu 2021, Table 6):  0.930")
+    print(f"  Published NBLR linear     (Hu 2021, Table 6):  0.916")
     print(f"  FAIMR full-SSA accuracy (Stage A):     "
           f"{full_metrics['accuracy']:.4f}")
     print(f"  FAIMR OOD-holdout accuracy (Stage B):  "
@@ -348,10 +348,14 @@ def main() -> int:
             "full_ssa":    hybrid_full,
             "ood_holdout": hybrid_ood if hybrid_full is not None else None,
         },
-        "comparison_published": {
-            "char_lstm_english_only_range":  [0.95, 0.97],
-            "char_cnn_english_only_range":   [0.94, 0.96],
-            "tfidf_lr_char_ngram_range":     [0.88, 0.91],
+        "comparison_published_hu2021_table6": {
+            "char_lstm_acc":  0.940,
+            "char_lstm_auc":  0.980,
+            "char_bert_acc":  0.930,
+            "char_bert_auc":  0.980,
+            "nblr_acc":       0.916,
+            "nblr_auc":       0.972,
+            "citation":       "Hu et al. 2021, arXiv:2102.03692, Table 6",
         },
     }
     out = ROOT / "results.json"

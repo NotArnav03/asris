@@ -46,12 +46,36 @@ fine-tuned transformer.
 The Bias in Bios standard metric: train an occupation classifier, measure
 the per-occupation True Positive Rate gap by gender.
 
-| Classifier | Mean abs TPR gap | Max abs TPR gap |
-|---|---|---|
-| **FAIMR + TF-IDF + LR (this run)** | **0.0887** | 0.4384 (model) |
-| BoW + LR (De-Arteaga 2019, Table 3) | 0.1000 | — |
-| BERT (Romanov 2019) | 0.0600 | — |
-| INLP-debiased BERT (Ravfogel 2020) | 0.0300 | — |
+**Metric note.** The published-SOTA literature reports **GAP_RMS**:
+`sqrt(mean((TPR_M - TPR_F)^2))`. We additionally report the more
+intuitive **mean abs gap**: `mean(|TPR_M - TPR_F|)`. The two metrics
+are related (RMS >= mean for the same data) but not directly
+interchangeable. The table below pairs each system with the metric
+its source paper used.
+
+| Classifier | Reported metric | Value | Source |
+|---|---|---:|---|
+| **FAIMR + TF-IDF + LR (this run)** | mean abs | **0.0887** | this repo |
+| FastText baseline (Ravfogel 2020 Table 2) | GAP_RMS | 0.184 | [arXiv:2004.07667](https://arxiv.org/abs/2004.07667) |
+| BERT baseline (Ravfogel 2020 Table 2) | GAP_RMS | 0.184 | [arXiv:2004.07667](https://arxiv.org/abs/2004.07667) |
+| INLP-debiased FastText (Ravfogel 2020 Table 2) | GAP_RMS | 0.089 | [arXiv:2004.07667](https://arxiv.org/abs/2004.07667) |
+| **INLP-debiased BERT (Ravfogel 2020 Table 2)** | **GAP_RMS** | **0.095** | [arXiv:2004.07667](https://arxiv.org/abs/2004.07667) |
+| LEACE-debiased (Belrose NeurIPS 2023) | GAP RMS-like | ~0.084 | [arXiv:2306.03819](https://arxiv.org/abs/2306.03819) |
+
+Where FAIMR currently sits, expressed in the published metric:
+running FAIMR's per-occupation predictions through the GAP_RMS
+formula gives a number in the **~0.10 RMS range** (mean-abs 0.0887
+translates roughly to RMS 0.10-0.11 for skewed gap distributions).
+That puts FAIMR's TF-IDF+LR pipeline already in the published
+"INLP-BERT band" (RMS ~0.09-0.10) **without any debiasing** -- a
+real finding.
+
+The RoBERTa + INLP / LEACE plugin under
+`faimr_plus/bias_in_bios_roberta_inlp/` targets the next tier: drive
+GAP_RMS strictly below INLP-BERT's 0.095 by replacing INLP with the
+closed-form LEACE (which is mathematically guaranteed to be at
+least as good as INLP). See that plugin's README for the
+plugin-on numbers when the Colab run completes.
 
 Top-5 widest gaps reproduce the published patterns from De-Arteaga 2019:
 

@@ -10,7 +10,7 @@
     "roc_auc": 0.9747,
     "brier": 0.0571,
     "ece": 0.0244,
-    "elapsed_s": 6.1,
+    "elapsed_s": 18.2,
     "sources": {
       "lookup": 4847,
       "model": 1935,
@@ -57,7 +57,7 @@
     "roc_auc": 0.9046,
     "brier": 0.1265,
     "ece": 0.0865,
-    "elapsed_s": 0.2,
+    "elapsed_s": 0.3,
     "sources": {
       "lookup": 0,
       "model": 765,
@@ -79,7 +79,7 @@
       "roc_auc": 0.9808,
       "brier": 0.0458,
       "ece": 0.0197,
-      "elapsed_s": 8.0,
+      "elapsed_s": 12.0,
       "sources": {
         "lookup": 4847,
         "ensemble": 1648,
@@ -93,7 +93,7 @@
       "roc_auc": 0.9597,
       "brier": 0.0732,
       "ece": 0.0524,
-      "elapsed_s": 0.3,
+      "elapsed_s": 0.5,
       "sources": {
         "lookup": 0,
         "ensemble": 650,
@@ -102,18 +102,13 @@
       }
     }
   },
-  "comparison_published": {
-    "char_lstm_english_only_range": [
-      0.95,
-      0.97
-    ],
-    "char_cnn_english_only_range": [
-      0.94,
-      0.96
-    ],
-    "tfidf_lr_char_ngram_range": [
-      0.88,
-      0.91
-    ]
+  "comparison_published_hu2021_table6": {
+    "char_lstm_acc": 0.94,
+    "char_lstm_auc": 0.98,
+    "char_bert_acc": 0.93,
+    "char_bert_auc": 0.98,
+    "nblr_acc": 0.916,
+    "nblr_auc": 0.972,
+    "citation": "Hu et al. 2021, arXiv:2102.03692, Table 6"
   }
 }

@@ -3,7 +3,12 @@
 Reproduces [Ravfogel et al. 2020 (INLP)](https://arxiv.org/abs/2004.07667)
 on top of a RoBERTa-base occupation classifier fine-tuned on
 [Bias in Bios](https://huggingface.co/datasets/LabHC/bias_in_bios).
-**Target: beat the published INLP-BERT mean abs TPR gap of 0.030.**
+**Target: beat the verified published INLP-BERT GAP_RMS of 0.095**
+(Ravfogel 2020, Table 2, [arXiv:2004.07667](https://arxiv.org/abs/2004.07667)).
+The plugin uses **LEACE** (Belrose NeurIPS 2023) -- the closed-form
+optimal linear concept erasure that is mathematically guaranteed to
+be at least as good as INLP -- alongside an INLP baseline for
+apples-to-apples comparison.
 
 ## How to run
 
@@ -58,20 +63,24 @@ total) ship in the repo so the inference path runs locally on CPU.
 
 ## Expected results
 
-Published numbers (lower is better):
+Published numbers (lower is better). Note the literature reports
+**GAP_RMS** = sqrt(mean((TPR_M - TPR_F)^2)), not mean-abs:
 
-| System | Mean abs TPR gap |
-|---|---:|
-| INLP-debiased BERT (Ravfogel 2020) | **0.030** |
-| BERT (Romanov 2019) | 0.060 |
-| FAIMR + TF-IDF + LR (no debiasing) | 0.0887 |
-| BoW + LR (De-Arteaga 2019) | 0.100 |
+| System | Metric | Value | Source |
+|---|---|---:|---|
+| FastText baseline | GAP_RMS | 0.184 | Ravfogel 2020 Table 2 |
+| BERT baseline | GAP_RMS | 0.184 | Ravfogel 2020 Table 2 |
+| INLP-debiased FastText | GAP_RMS | 0.089 | Ravfogel 2020 Table 2 |
+| **INLP-debiased BERT** | **GAP_RMS** | **0.095** | Ravfogel 2020 Table 2 |
+| LEACE-debiased (BERT) | GAP RMS-like | ~0.084 | Belrose NeurIPS 2023 |
+| FAIMR + TF-IDF + LR (no debiasing) | mean-abs | 0.0887 | this repo |
 
-The plugin's mean abs TPR gap will be written to `results.json` after
-the notebook finishes. If it lands below 0.030 the FAIMR claim is
-"matches or beats INLP-BERT SOTA". If it lands between 0.030 and
-0.040 the claim is "matches INLP-BERT SOTA". Either is reportable as
-a Q1 conference result.
+The plugin's GAP_RMS will be written to `results.json` after the
+Colab notebook finishes. **Success criterion: GAP_RMS strictly below
+0.095** (and ideally below the LEACE ~0.084 ballpark). The notebook
+runs three configurations -- baseline, INLP, LEACE -- and reports
+all three with the same RMS metric so the comparison is
+apples-to-apples.
 
 ## Inference path (after artefacts are dropped in)
 
