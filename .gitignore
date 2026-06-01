@@ -53,6 +53,9 @@ benchmarks/*/_cache/
 !fairness/names/model.pkl
 !fairness/names/model_card.json
 
+# Never commit the recalibrator-fitter backup of the prior pickle.
+fairness/names/*.pkl.bak
+
 # ─── Model Files & Caches ───────────────────
 *.pt
 *.pth

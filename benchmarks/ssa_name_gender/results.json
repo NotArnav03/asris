@@ -6,11 +6,11 @@
   "n_holdout_attested": 765,
   "stage_a_full_ssa": {
     "n": 6782,
-    "accuracy": 0.9208,
-    "roc_auc": 0.9745,
-    "brier": 0.0577,
-    "ece": 0.032,
-    "elapsed_s": 8.2,
+    "accuracy": 0.9216,
+    "roc_auc": 0.9747,
+    "brier": 0.0571,
+    "ece": 0.0244,
+    "elapsed_s": 3.1,
     "sources": {
       "lookup": 4847,
       "model": 1935,
@@ -21,26 +21,26 @@
     {
       "bucket": "1-4 years (rare tail)",
       "n": 1678,
-      "accuracy": 0.8385,
-      "roc_auc": 0.914,
-      "brier": 0.1149,
-      "ece": 0.0638
+      "accuracy": 0.8409,
+      "roc_auc": 0.9161,
+      "brier": 0.1137,
+      "ece": 0.0656
     },
     {
       "bucket": "5-19 years",
       "n": 1786,
-      "accuracy": 0.9171,
-      "roc_auc": 0.9752,
-      "brier": 0.059,
-      "ece": 0.037
+      "accuracy": 0.9177,
+      "roc_auc": 0.9755,
+      "brier": 0.058,
+      "ece": 0.0302
     },
     {
       "bucket": "20-49 years",
       "n": 1379,
       "accuracy": 0.95,
       "roc_auc": 0.9843,
-      "brier": 0.0375,
-      "ece": 0.0336
+      "brier": 0.037,
+      "ece": 0.0269
     },
     {
       "bucket": "50+ years (canonical)",
@@ -48,16 +48,16 @@
       "accuracy": 0.9747,
       "roc_auc": 0.9975,
       "brier": 0.0214,
-      "ece": 0.0224
+      "ece": 0.0222
     }
   ],
   "stage_b_ood_holdout": {
     "n": 765,
-    "accuracy": 0.8157,
-    "roc_auc": 0.9007,
-    "brier": 0.1295,
-    "ece": 0.0919,
-    "elapsed_s": 0.2,
+    "accuracy": 0.817,
+    "roc_auc": 0.9046,
+    "brier": 0.1265,
+    "ece": 0.0865,
+    "elapsed_s": 0.1,
     "sources": {
       "lookup": 0,
       "model": 765,

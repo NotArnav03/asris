@@ -8,8 +8,8 @@
     "previous_sha256": "0331ebc090f9c9effe033b9d8cd875d42ab00104ea259d5d85519175e9abafcb"
   },
   "integrity": {
-    "sha256": "0331ebc090f9c9effe033b9d8cd875d42ab00104ea259d5d85519175e9abafcb",
-    "size_bytes": 4653506,
+    "sha256": "7af4c646ebd663dde43c912a14a49d68b18510e5c431dad7d314532787dd60c1",
+    "size_bytes": 4654150,
     "verification": "On classifier load, fairness/names/classifier.py recomputes this hash and compares.  A mismatch sets classifier.integrity_violated = True; audit_ranking_bias then prepends a [CRITICAL] recommendation and exposes an integrity block in the audit report."
   },
   "training_corpus": {
@@ -67,13 +67,22 @@
         "south_asian": 0.0848,
         "western": 0.0599
       }
+    },
+    "ssa_recalibration": {
+      "enabled": true,
+      "cultures": [
+        "western"
+      ],
+      "fit_set": "training_corpus.csv \u2229 SSA aggregate",
+      "fit_set_n": 4847,
+      "fit_set_disjoint_from_benchmark_holdout": true
     }
   },
   "hyperparameter_search": {},
   "training": {
     "n_train": 36184,
     "n_test": 9046,
-    "split": "stratified by (culture, y) — see train_classifier.py",
+    "split": "stratified by (culture, y) \u2014 see train_classifier.py",
     "sample_weighted": true,
     "fit_seconds": 0.1
   },
@@ -152,7 +161,7 @@
     "Names not romanised to ASCII (e.g. CJK ideographs)."
   ],
   "limitations": [
-    "Coverage is best for European, East Asian, and Arab names (see by_culture metrics).  South Asian and Western unisex names have smaller training sets — interpret probabilities near 0.5 conservatively.",
+    "Coverage is best for European, East Asian, and Arab names (see by_culture metrics).  South Asian and Western unisex names have smaller training sets \u2014 interpret probabilities near 0.5 conservatively.",
     "Gender is treated as binary because the upstream corpus uses binary labels.  This does not reflect the full spectrum of gender identity.",
     "Calibration is performed on the same data distribution as training; cross-distribution drift (e.g. a corpus of African names) will degrade calibration."
   ],
