@@ -10,7 +10,7 @@ single-metric SOTA classifier.
 | `bias_in_bios/` | Resume / biography fairness | Per-occupation TPR gender gap; FAIMR's pronoun-based gender attribution accuracy | [De-Arteaga et al. 2019 (FAccT)](https://arxiv.org/abs/1901.09451) |
 | `ssa_name_gender/` | Name → gender classification | Accuracy, ECE, ROC-AUC on a year-stratified SSA holdout | [Hu et al. 2021 (arXiv:2102.03692)](https://arxiv.org/abs/2102.03692) -- verified char-LSTM SOTA = 0.940 |
 | `fair_ranking/` | Fairness-aware re-ranking algorithm | NDCG-displacement Pareto curve vs FA*IR | [Zehlike et al. 2017 (CIKM)](https://arxiv.org/abs/1706.06368) |
-| `trec_fair_ranking/` | Fair re-ranking on TREC Wikipedia editor task (planned) | AWRF + NDCG vs published TREC track baselines | [TREC 2022 Fair Ranking](https://arxiv.org/abs/2302.05558) |
+| `trec_fair_ranking/` | Fair re-ranking on TREC Wikipedia editor task | M1=NDCG*AWRF vs FA*IR; auxiliary min-prefix-AIR | [TREC 2022 Fair Ranking (Ekstrand)](https://arxiv.org/abs/2302.05558) |
 
 Each subdirectory contains:
 
@@ -61,13 +61,22 @@ honest, verified claims are:
    names: `benchmarks/ssa_name_gender/README.md`. Published-SOTA
    citation has been corrected to Hu et al. 2021
    ([arXiv:2102.03692](https://arxiv.org/abs/2102.03692)).
-3. **FA\*IR**: FAIMR's constrained-insertion FCR matches or beats
-   FA\*IR's NDCG at min-prefix-AIR ≥ 0.60 in **7 of 8 conditions**,
-   and reaches the legal 4/5-Rule standard (AIR ≥ 0.80) in
-   **all 8 conditions** where FA\*IR only reaches it in 2 of 8.
-   Plus written termination proof, within-group order invariant,
-   and a Pareto-frontier trade-off curve (FA\*IR is single-point).
-   Full numbers: `benchmarks/fair_ranking/README.md`.
+3. **FA\*IR (synthetic, Zehlike 2017 protocol)**: FAIMR's
+   constrained-insertion FCR matches or beats FA\*IR's NDCG at
+   min-prefix-AIR ≥ 0.60 in **7 of 8 conditions**, and reaches the
+   legal 4/5-Rule standard (AIR ≥ 0.80) in **all 8 conditions**
+   where FA\*IR only reaches it in 2 of 8. Plus written termination
+   proof, within-group order invariant, and a Pareto-frontier
+   trade-off curve. Full numbers:
+   `benchmarks/fair_ranking/README.md`.
+
+4. **TREC Fair Ranking 2022 (real Wikipedia editor task)**: On the
+   official M1 = NDCG × AWRF metric, FAIMR FCR and FA\*IR are
+   **essentially tied across 46 queries** (22 wins vs 23). On the
+   auxiliary legal 4/5-Rule metric, **FAIMR FCR reaches AIR ≥ 0.80
+   on 4.2× more queries than FA\*IR** (21/46 vs 5/46). The pattern
+   replicates the synthetic finding: M1 ties, AIR dominates. Full
+   numbers: `benchmarks/trec_fair_ranking/README.md`.
 
 The novel contributions FAIMR has that aren't measured on any
 benchmark above (Unicode-confusable defence, RTL honorifics, drift
