@@ -1,0 +1,12 @@
+{
+  "seed": 20251128,
+  "max_len": 24,
+  "best_val_accuracy": 0.8592,
+  "n_params": 150625,
+  "min_n_years": 3,
+  "split_counts": {
+    "train": 4168,
+    "val": 703,
+    "test": 701
+  }
+}

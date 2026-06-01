@@ -41,9 +41,11 @@ Three stages, all with accuracy + ROC-AUC + Brier + ECE:
 
 | System | Accuracy | ROC-AUC | Brier | ECE |
 |---|---:|---:|---:|---:|
-| **FAIMR -- full-SSA (Stage A, with SSA recalibrator)** | **0.9216** | **0.9747** | **0.0571** | **0.0244** |
-| FAIMR -- full-SSA (Stage A, pre-recalibrator) | 0.9208 | 0.9745 | 0.0577 | 0.0320 |
-| FAIMR -- OOD holdout (Stage B)  | 0.8170 | 0.9046 | 0.1265 | 0.0865 |
+| **FAIMR + char-LSTM HYBRID -- full-SSA (Stage D)** | **0.9393** | **0.9808** | **0.0436** | **0.0197** |
+| FAIMR + char-LSTM HYBRID -- OOD holdout (Stage D) | 0.9046 | 0.9597 | 0.0790 | 0.0524 |
+| FAIMR alone -- full-SSA (Stage A, with SSA recalibrator) | 0.9216 | 0.9747 | 0.0571 | 0.0244 |
+| FAIMR alone -- full-SSA (Stage A, pre-recalibrator) | 0.9208 | 0.9745 | 0.0577 | 0.0320 |
+| FAIMR alone -- OOD holdout (Stage B)  | 0.8170 | 0.9046 | 0.1265 | 0.0865 |
 | Inline TF-IDF + LR -- OOD (Stage C) | 0.8497 | 0.9296 | 0.1062 | 0.0475 |
 | Published char-LSTM (English-only) | ~0.95--0.97 | -- | -- | -- |
 | Published char-CNN  (English-only) | ~0.94--0.96 | -- | -- | -- |

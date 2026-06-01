@@ -56,6 +56,10 @@ benchmarks/*/_cache/
 # Never commit the recalibrator-fitter backup of the prior pickle.
 fairness/names/*.pkl.bak
 
+# Whitelist the SSA char-LSTM plugin weights and meta.
+!faimr_plus/ssa_char_lstm/weights.pt
+!faimr_plus/ssa_char_lstm/meta.json
+
 # ─── Model Files & Caches ───────────────────
 *.pt
 *.pth

@@ -10,7 +10,7 @@
     "roc_auc": 0.9747,
     "brier": 0.0571,
     "ece": 0.0244,
-    "elapsed_s": 3.1,
+    "elapsed_s": 6.1,
     "sources": {
       "lookup": 4847,
       "model": 1935,
@@ -57,7 +57,7 @@
     "roc_auc": 0.9046,
     "brier": 0.1265,
     "ece": 0.0865,
-    "elapsed_s": 0.1,
+    "elapsed_s": 0.2,
     "sources": {
       "lookup": 0,
       "model": 765,
@@ -71,6 +71,36 @@
     "brier": 0.1062,
     "ece": 0.0475,
     "n_train": 36850
+  },
+  "stage_d_hybrid_plugin": {
+    "full_ssa": {
+      "n": 6782,
+      "accuracy": 0.9393,
+      "roc_auc": 0.9808,
+      "brier": 0.0458,
+      "ece": 0.0197,
+      "elapsed_s": 8.0,
+      "sources": {
+        "lookup": 4847,
+        "ensemble": 1648,
+        "lstm": 287,
+        "empty": 0
+      }
+    },
+    "ood_holdout": {
+      "n": 765,
+      "accuracy": 0.9046,
+      "roc_auc": 0.9597,
+      "brier": 0.0732,
+      "ece": 0.0524,
+      "elapsed_s": 0.3,
+      "sources": {
+        "lookup": 0,
+        "ensemble": 650,
+        "lstm": 115,
+        "empty": 0
+      }
+    }
   },
   "comparison_published": {
     "char_lstm_english_only_range": [

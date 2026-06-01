@@ -119,6 +119,39 @@ def _run_faimr(df) -> tuple[dict, "np.ndarray"]:
     return m, p_pred
 
 
+def _run_hybrid(df) -> tuple[dict, "np.ndarray"]:
+    """FAIMR + SSA char-LSTM hybrid (faimr_plus plugin).  Returns None
+    metrics if plugin weights are not present, so the benchmark can
+    run without the plugin installed."""
+    import numpy as np
+    from pathlib import Path
+    weights = (
+        Path(__file__).resolve().parent.parent.parent
+        / "faimr_plus" / "ssa_char_lstm" / "weights.pt"
+    )
+    if not weights.exists():
+        return None, None
+
+    from faimr_plus.ssa_char_lstm.hybrid import predict_hybrid
+
+    names = df["name"].tolist()
+    t0 = time.time()
+    results = predict_hybrid(names)
+    elapsed = time.time() - t0
+
+    p_pred = np.array([r.p_female for r in results])
+    sources = [r.source for r in results]
+    y_true = (df["p_female"].to_numpy() >= 0.5).astype(int)
+
+    m = _metrics(y_true, p_pred)
+    m["elapsed_s"] = round(elapsed, 1)
+    m["sources"] = {
+        s: sum(1 for x in sources if x == s)
+        for s in ("lookup", "ensemble", "lstm", "empty")
+    }
+    return m, p_pred
+
+
 def _attestation_buckets(df, p_pred) -> dict:
     """Stratify accuracy by name-attestation strength.
 
@@ -258,6 +291,29 @@ def main() -> int:
     print(f"  ECE       = {baseline_metrics['ece']:.4f}")
     print()
 
+    # ------------------------------------------------------------
+    # Stage D: hybrid (FAIMR + SSA char-LSTM plugin)
+    # ------------------------------------------------------------
+    print("## Stage D: FAIMR + SSA char-LSTM hybrid plugin "
+          "(faimr_plus.ssa_char_lstm)")
+    hybrid_full, _ = _run_hybrid(ssa)
+    if hybrid_full is None:
+        print("  plugin not installed (weights.pt missing) -- SKIPPED")
+        print()
+    else:
+        print(f"  full-SSA n={hybrid_full['n']}  "
+              f"acc={hybrid_full['accuracy']:.4f}  "
+              f"auc={hybrid_full['roc_auc']}  "
+              f"ECE={hybrid_full['ece']:.4f}")
+        print(f"  sources    = {hybrid_full['sources']}")
+        hybrid_ood, _ = _run_hybrid(holdout_attested)
+        print(f"  OOD-holdout n={hybrid_ood['n']}  "
+              f"acc={hybrid_ood['accuracy']:.4f}  "
+              f"auc={hybrid_ood['roc_auc']}  "
+              f"ECE={hybrid_ood['ece']:.4f}")
+        print(f"  sources    = {hybrid_ood['sources']}")
+        print()
+
     print("## Headline numbers")
     print(f"  Published char-LSTM (English-only):    ~0.95-0.97")
     print(f"  Published char-CNN  (English-only):    ~0.94-0.96")
@@ -268,6 +324,13 @@ def main() -> int:
           f"{holdout_metrics['accuracy']:.4f}")
     print(f"  Baseline OOD-holdout (Stage C):        "
           f"{baseline_metrics['accuracy']:.4f}")
+    if hybrid_full is not None:
+        print(f"  Hybrid full-SSA accuracy (Stage D):    "
+              f"{hybrid_full['accuracy']:.4f}")
+        print(f"  Hybrid OOD-holdout accuracy (Stage D): "
+              f"{hybrid_ood['accuracy']:.4f}")
+        print(f"  -- delta (hybrid vs baseline on OOD):  "
+              f"{hybrid_ood['accuracy'] - baseline_metrics['accuracy']:+.4f}")
     print(f"  -- delta (FAIMR vs baseline on OOD):   "
           f"{holdout_metrics['accuracy'] - baseline_metrics['accuracy']:+.4f}")
 
@@ -281,6 +344,10 @@ def main() -> int:
         "stage_a_attestation_buckets": buckets,
         "stage_b_ood_holdout":         holdout_metrics,
         "stage_c_apples_to_apples_baseline": baseline_metrics,
+        "stage_d_hybrid_plugin": {
+            "full_ssa":    hybrid_full,
+            "ood_holdout": hybrid_ood if hybrid_full is not None else None,
+        },
         "comparison_published": {
             "char_lstm_english_only_range":  [0.95, 0.97],
             "char_cnn_english_only_range":   [0.94, 0.96],
