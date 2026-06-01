@@ -93,6 +93,10 @@ desktop.ini
 .ipynb_checkpoints/
 *.ipynb
 
+# Whitelist Colab notebooks under faimr_plus/ -- they are the
+# user-facing entry points to the GPU-training plugins.
+!faimr_plus/**/*.ipynb
+
 # ─── Logs ────────────────────────────────────
 *.log
 logs/
