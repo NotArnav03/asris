@@ -10,7 +10,7 @@
     "roc_auc": 0.9747,
     "brier": 0.0571,
     "ece": 0.0244,
-    "elapsed_s": 18.2,
+    "elapsed_s": 5.3,
     "sources": {
       "lookup": 4847,
       "model": 1935,
@@ -57,7 +57,7 @@
     "roc_auc": 0.9046,
     "brier": 0.1265,
     "ece": 0.0865,
-    "elapsed_s": 0.3,
+    "elapsed_s": 0.1,
     "sources": {
       "lookup": 0,
       "model": 765,
@@ -79,7 +79,7 @@
       "roc_auc": 0.9808,
       "brier": 0.0458,
       "ece": 0.0197,
-      "elapsed_s": 12.0,
+      "elapsed_s": 3.7,
       "sources": {
         "lookup": 4847,
         "ensemble": 1648,
@@ -93,7 +93,7 @@
       "roc_auc": 0.9597,
       "brier": 0.0732,
       "ece": 0.0524,
-      "elapsed_s": 0.5,
+      "elapsed_s": 0.3,
       "sources": {
         "lookup": 0,
         "ensemble": 650,

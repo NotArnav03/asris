@@ -68,6 +68,8 @@ cache/
 # AFTER *.pt so the re-include actually takes effect).
 !faimr_plus/ssa_char_lstm/weights.pt
 !faimr_plus/ssa_char_lstm/meta.json
+!faimr_plus/ssa_char_lstm/weights_v2.pt
+!faimr_plus/ssa_char_lstm/meta_v2.json
 .cache/
 embedding_cache/
 

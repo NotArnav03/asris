@@ -86,10 +86,47 @@ unique aggregated names. Hu 2021's char-LSTM is trained on Yahoo
 names (a different but comparably-sized corpus) and tested on SSA;
 on the SSA test slice it reports accuracy 0.940. FAIMR's hybrid
 (0.9393 full-SSA) essentially ties this with no Yahoo training
-data, and the canonical-names slice (0.9747) strictly beats it. A
-char-LSTM-v2 plugin that pulls additional training data from a
-larger SSA mirror or the US Census is logged as a follow-up and
-targets a strict >0.940 full-SSA accuracy.
+data, and the canonical-names slice (0.9747) strictly beats it.
+
+## v2 experiment (logged honestly)
+
+We trained `train_v2.py` to try and beat Hu strictly. It used:
+
+- Training set: `data/names/training_corpus.csv` (~45 k names,
+  firstname-database-derived, multicultural -- comparable in
+  scale to Hu's Yahoo training).
+- Architecture: 2-layer bi-LSTM, hidden 128, dropout 0.4
+  (661 k params, ~5× v1 capacity).
+- Cosine LR schedule, 60 epochs, patience 10.
+
+Standalone results on the SSA test set (full corpus, n=6782):
+
+| Configuration | Accuracy | AUC | vs Hu 2021 |
+|---|---:|---:|---|
+| v2 standalone | 0.9036 | 0.949 | -0.036 (LOSES) |
+| v2 hybrid (FAIMR lookup + v2 LSTM) | 0.9279 | 0.9754 | -0.012 (LOSES) |
+| v1+v2 ensemble (60/40) inside hybrid | 0.9379 | 0.9802 | -0.002 (TIES) |
+| **v1 hybrid (deployed)** | **0.9393** | **0.9808** | -0.001 (TIES) |
+
+The v1 model alone (despite v1's smaller architecture) gives the
+best hybrid accuracy because v1 was trained directly on the SSA
+distribution. v2 trained on the broader firstname-DB sees a
+different distribution and its predictions drift on SSA-style
+English names. Ensembling helps a bit but doesn't recover the
+gap.
+
+**Conclusion:** the public training corpora available to us
+(SSA top-1000 + firstname-DB ~45k) are insufficient to strictly
+beat Hu 2021's Yahoo-trained char-LSTM. Strict beat requires
+significantly more training data than the public domain offers.
+
+**Future work:** pretrain on Wikidata person dump (1M+ named
+individuals with gender labels), then fine-tune on
+`training_corpus.csv`. This would put FAIMR's training set on
+parity with or beyond Hu's Yahoo corpus. Logged as a v3 task.
+
+The v2 weights (`weights_v2.pt`, ~2.6 MB) and meta (`meta_v2.json`)
+are committed for reproducibility but NOT loaded by `predict.py`.
 
 ## Install
 
